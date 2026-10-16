@@ -6,6 +6,7 @@ newest id) without needing a user account. A private source falls back to scanni
 from __future__ import annotations
 
 import asyncio
+import html as html_lib
 import re
 from typing import Awaitable, Callable
 
@@ -20,13 +21,35 @@ def parse_ids(html: str, username: str) -> list[int]:
     return sorted({int(i) for u, i in POST_RE.findall(html) if u.lower() == username.lower()})
 
 
-def parse_button_ids(html: str, username: str) -> set[int]:
-    """Ids of the posts on one preview page that carry inline buttons (Telegram does not copy those)."""
-    found: set[int] = set()
+TAG_RE = re.compile(r"<[^>]+>")
+BTN_RE = re.compile(r'<a class="tgme_widget_message_inline_button( url_button)?" href="([^"]*)"[^>]*>(.*?)</a>', re.S)
+Keyboard = list[list[tuple[str, str]]]  # rows of (text, url)
+
+
+def parse_keyboards(html: str, username: str) -> dict[int, tuple[Keyboard, int]]:
+    """Inline keyboards of the posts on one preview page: {post id: (URL-button rows, number of other buttons)}.
+
+    Only URL buttons are visible (and meaningful) outside the original bot; callback buttons are counted as dropped."""
+    found: dict[int, tuple[Keyboard, int]] = {}
     for chunk in html.split('<div class="tgme_widget_message_wrap')[1:]:
         m = POST_RE.search(chunk)
-        if m and m.group(1).lower() == username.lower() and "tgme_widget_message_inline_button" in chunk:
-            found.add(int(m.group(2)))
+        start = chunk.find("tgme_widget_message_inline_keyboard")
+        if not m or m.group(1).lower() != username.lower() or start < 0:
+            continue
+        rows: Keyboard = []
+        dropped = 0
+        for row_html in chunk[start:].split("tgme_widget_message_inline_row")[1:]:
+            row = []
+            for is_url, href, inner in BTN_RE.findall(row_html):
+                text = html_lib.unescape(TAG_RE.sub("", inner)).strip()
+                url = html_lib.unescape(href)
+                if is_url and text and url.startswith(("http://", "https://", "tg://")):
+                    row.append((text, url))
+                else:
+                    dropped += 1
+            if row:
+                rows.append(row)
+        found[int(m.group(2))] = (rows, dropped)
     return found
 
 
@@ -37,11 +60,11 @@ async def list_public_ids(
     delay: float = 0.35,
     progress: Callable[[int, int], Awaitable[None]] | None = None,
     client: httpx.AsyncClient | None = None,
-    buttons: set[int] | None = None,
+    keyboards: dict[int, tuple[Keyboard, int]] | None = None,
 ) -> list[int]:
     """All post ids of a public channel within [lo, hi], ascending; [] when the channel has no web preview.
 
-    `buttons`, if given, is filled with the ids of posts that have inline buttons."""
+    `keyboards`, if given, is filled with the inline keyboards of the posts (see parse_keyboards)."""
     own = client is None
     client = client or httpx.AsyncClient(headers=HEADERS, timeout=30, follow_redirects=True)
     found: set[int] = set()
@@ -66,8 +89,9 @@ async def list_public_ids(
             if not page:
                 break
             top = top or page[-1]
-            if buttons is not None:
-                buttons.update(i for i in parse_button_ids(r.text, username) if lo <= i and (hi is None or i <= hi))
+            if keyboards is not None:
+                keyboards.update({i: kb for i, kb in parse_keyboards(r.text, username).items()
+                                  if lo <= i and (hi is None or i <= hi)})
             found.update(i for i in page if lo <= i and (hi is None or i <= hi))
             if progress:
                 await progress(len(found), page[0])

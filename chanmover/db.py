@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS jobs(
     status TEXT DEFAULT 'new', opts TEXT DEFAULT '{}', ids TEXT,
     total INTEGER DEFAULT 0, pos INTEGER DEFAULT 0, start_pos INTEGER DEFAULT 0,
     copied INTEGER DEFAULT 0, skipped INTEGER DEFAULT 0, failed INTEGER DEFAULT 0, live INTEGER DEFAULT 0,
-    top_id INTEGER DEFAULT 0, mirror INTEGER DEFAULT 1, mode TEXT DEFAULT 'list',
+    top_id INTEGER DEFAULT 0, mirror INTEGER DEFAULT 1, mode TEXT DEFAULT 'list', kbs TEXT,
     owner INTEGER, status_chat INTEGER, status_msg INTEGER, error TEXT,
     created_at REAL, started_at REAL, finished_at REAL);
 CREATE TABLE IF NOT EXISTS msgmap(
@@ -29,12 +29,12 @@ CREATE TABLE IF NOT EXISTS windows(
 CREATE TABLE IF NOT EXISTS failures(
     job_id INTEGER, src_id INTEGER, reason TEXT, PRIMARY KEY(job_id, src_id));
 CREATE TABLE IF NOT EXISTS live_queue(
-    job_id INTEGER, src_id INTEGER, grp TEXT, ts REAL, PRIMARY KEY(job_id, src_id));
+    job_id INTEGER, src_id INTEGER, grp TEXT, ts REAL, markup TEXT, PRIMARY KEY(job_id, src_id));
 """
 
 JOB_FIELDS = {
     "status", "opts", "ids", "total", "pos", "start_pos", "copied", "skipped", "failed", "live", "top_id", "mirror",
-    "mode", "status_chat", "status_msg", "error", "started_at", "finished_at",
+    "mode", "status_chat", "status_msg", "error", "started_at", "finished_at", "kbs",
 }
 
 
@@ -50,6 +50,10 @@ class Database:
         conn.row_factory = aiosqlite.Row
         await conn.execute("PRAGMA journal_mode=WAL")
         await conn.executescript(SCHEMA)
+        for table, column in (("jobs", "kbs TEXT"), ("live_queue", "markup TEXT")):  # databases from older versions
+            have = {r["name"] for r in await (await conn.execute(f"PRAGMA table_info({table})")).fetchall()}
+            if column.split()[0] not in have:
+                await conn.execute(f"ALTER TABLE {table} ADD COLUMN {column}")
         await conn.commit()
         return cls(conn)
 
@@ -169,9 +173,9 @@ class Database:
         await self.c.commit()
 
     # live queue ---------------------------------------------------------------------------------------------
-    async def queue_live(self, job_id: int, src_id: int, grp: str | None) -> None:
-        await self.c.execute("INSERT OR IGNORE INTO live_queue(job_id,src_id,grp,ts) VALUES(?,?,?,?)",
-                             (job_id, src_id, grp, time.time()))
+    async def queue_live(self, job_id: int, src_id: int, grp: str | None, markup: str | None = None) -> None:
+        await self.c.execute("INSERT OR IGNORE INTO live_queue(job_id,src_id,grp,ts,markup) VALUES(?,?,?,?,?)",
+                             (job_id, src_id, grp, time.time(), markup))
         await self.c.commit()
 
     async def live_queue(self, job_id: int) -> list[aiosqlite.Row]:

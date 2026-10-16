@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import logging
 import re
 
@@ -448,8 +449,49 @@ async def on_job(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if len(rows) > 40:
             lines.append(f"… و {fa(len(rows) - 40)} مورد دیگر")
         await q.message.reply_text("\n".join(lines))
+    elif action == "skipped":
+        await send_skipped(update, context, job)
     elif action == "export":
         await send_export(update, context, job)
+
+
+SKIPPED_EXPLAIN = (
+    "⏭ <b>«ردشده» یعنی چه؟</b>\n"
+    "شناسه‌هایی از بازه‌ی کانال که پستِ قابل‌کپی نداشتند. معمولاً این‌ها هستند:\n"
+    "• پست‌هایی که قبلاً پاک شده‌اند (بیشترِ موارد)\n"
+    "• پیام‌های سرویس: «کانال ساخته شد»، «پیامی پین شد»، تغییر نام یا عکس کانال\n"
+    "• نوع‌هایی که تلگرام اجازه‌ی کپی‌شان را نمی‌دهد (مثل مسابقه‌ی بدون کلید پاسخ یا قرعه‌کشی)\n"
+    "• در کانال خصوصی، چند شناسه‌ی خالی بعد از آخرین پست هم در این عدد می‌آید.\n\n"
+    "ربات نمی‌تواند بین این‌ها فرق بگذارد، چون تلگرام فقط می‌گوید «پیامی نبود». اما برای کانال عمومی می‌توانم "
+    "مواردی را که در کانال <b>دیده می‌شدند ولی کپی نشدند</b> جدا نشان دهم:"
+)
+
+
+async def listed_not_copied(db, job) -> list[int] | None:
+    """Posts the public preview listed that did not end up in the destination (None: no preview list available)."""
+    if not job["ids"]:
+        return None
+    copied = {r["src_id"] for r in await db.id_map(job["id"])}
+    failed = {r["src_id"] for r in await db.failures(job["id"])}
+    windows = [(r[0], r[1]) for r in await db.c.execute_fetchall(
+        "SELECT first_src,last_src FROM windows WHERE job_id=?", (job["id"],))]
+    return [i for i in json.loads(job["ids"]) if i < (job["pos"] or 0) and i not in copied and i not in failed
+            and not any(a <= i <= b for a, b in windows)]
+
+
+async def send_skipped(update: Update, context: ContextTypes.DEFAULT_TYPE, job) -> None:
+    db, _, _ = deps(context)
+    text = SKIPPED_EXPLAIN
+    lost = await listed_not_copied(db, job)
+    if lost is None:
+        text = text.rsplit("\n\n", 1)[0] + "\n\n(این انتقال از کانال خصوصی است؛ فهرست جداگانه ندارد.)"
+    elif not lost:
+        text += "\n\n✅ هیچ موردی نبود؛ همه‌ی پست‌هایی که در کانال دیده می‌شدند کپی شده‌اند."
+    else:
+        links = [f"<a href=\"{ui.post_link(job['src'], job['src_username'], i)}\">{fa(i)}</a>" for i in lost[:60]]
+        text += f"\n\n📌 <b>{fa(len(lost))} مورد:</b> " + "، ".join(links) + (" …" if len(lost) > 60 else "")
+        text += "\nاگر پستِ واقعی است، آن را دستی در مقصد بگذارید."
+    await update.callback_query.message.reply_text(text)
 
 
 async def send_export(update: Update, context: ContextTypes.DEFAULT_TYPE, job) -> None:
@@ -546,8 +588,12 @@ async def on_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not msg or msg.pinned_message or msg.new_chat_title or msg.new_chat_photo or msg.delete_chat_photo or msg.channel_chat_created:
         return
     db, engine, _ = deps(context)
+    if not await db.get_chat(msg.chat_id):  # the "added as admin" event can get lost; a post proves the bot is in
+        await db.upsert_chat(msg.chat_id, msg.chat.title or str(msg.chat_id), msg.chat.username, msg.chat.type, False)
+    rows = [[[b.text, b.url] for b in row if b.url] for row in msg.reply_markup.inline_keyboard] if msg.reply_markup else []
+    markup = json.dumps([row for row in rows if row]) if any(rows) else None  # URL buttons travel with the copy
     for job in await db.mirror_jobs(msg.chat_id):
-        await db.queue_live(job["id"], msg.message_id, msg.media_group_id)
+        await db.queue_live(job["id"], msg.message_id, msg.media_group_id, markup)
         if job["status"] == "done":
             engine.schedule_drain(job["id"])
 

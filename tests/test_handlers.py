@@ -45,9 +45,39 @@ def test_progress_text_for_a_running_job():
     job = {"id": 3, "status": "running", "src_title": "قدیمی", "src_username": "old_ch", "dst_title": "جدید", "total": 1000,
            "pos": 250, "start_pos": 1, "mode": "range", "copied": 240, "skipped": 10, "failed": 0, "live": 0, "mirror": 1,
            "error": None,
-           "opts": '{"buttons_seen": 7}'}
+           "opts": '{"buttons_seen": 7, "buttons_dropped": 2}'}
     text = ui.job_text(job, {"per_min": 100})
-    assert "۷ پست دکمه" in text
+    assert "۷ پست" in text and "۲ دکمه" in text
     assert "۲۴۰" in text and "٪" in text and "⏳" in text and "@old_ch" in text
     kb = ui.job_keyboard(job, True)
     assert any("pause" in b.callback_data for row in kb.inline_keyboard for b in row)
+
+
+async def test_listed_but_not_copied_posts_are_found(db, make_job):
+    from chanmover.handlers import listed_not_copied
+    job = await make_job(ids=[4, 5, 6, 7, 8], pos=9)
+    await db.c.execute("INSERT INTO msgmap(job_id,src_id,dst_id) VALUES(?,?,?)", (job["id"], 4, 1))
+    await db.c.execute("INSERT INTO msgmap(job_id,src_id,dst_id) VALUES(?,?,?)", (job["id"], 6, 2))
+    await db.c.execute("INSERT INTO windows(job_id,first_src,last_src,dst_ids) VALUES(?,?,?,?)", (job["id"], 7, 8, "[3]"))
+    await db.c.commit()
+    assert await listed_not_copied(db, job) == [5]  # 7-8 sit in a window with unknown pairing, so they are not accused
+
+
+async def test_channel_post_with_url_buttons_is_queued_with_them(db, cfg, make_job):
+    import json
+    from telegram import Bot, Update
+    from chanmover.handlers import on_channel_post
+    job = await make_job(ids=[1], pos=2)
+    await db.update_job(job["id"], status="done")
+    update = Update.de_json({"update_id": 1, "channel_post": {
+        "message_id": 77, "date": 1790000000, "chat": {"id": -100, "type": "channel", "title": "src"}, "text": "hi",
+        "reply_markup": {"inline_keyboard": [[{"text": "Watch", "url": "https://t.me/bot?start=1"}, {"text": "cb", "callback_data": "x"}],
+                                              [{"text": "only cb", "callback_data": "y"}]]}}}, Bot("1:abc"))
+
+    class Engine:
+        def schedule_drain(self, *a, **k):
+            pass
+    ctx = SimpleNamespace(application=SimpleNamespace(bot_data={"db": db, "cfg": cfg, "engine": Engine()}))
+    await on_channel_post(update, ctx)
+    row = (await db.live_queue(job["id"]))[0]
+    assert row["src_id"] == 77 and json.loads(row["markup"]) == [[["Watch", "https://t.me/bot?start=1"]]]

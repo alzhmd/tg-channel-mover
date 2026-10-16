@@ -5,7 +5,7 @@ from chanmover import scrape
 from chanmover.engine import classify
 from telegram.error import BadRequest, Forbidden
 
-from conftest import FakeBot
+from conftest import FakeBot, Sent
 
 
 async def wait_done(engine, job_id):
@@ -242,3 +242,42 @@ async def test_only_the_newest_job_per_pair_mirrors(db, make):
     await db.c.execute("UPDATE jobs SET mirror=1 WHERE id=?", (first,))  # even if both were on, only the newest mirrors
     await db.c.commit()
     assert [j["id"] for j in await db.mirror_jobs(-100)] == [second]
+
+
+class MarkupBot(FakeBot):
+    async def copy_message(self, chat_id, from_chat_id, message_id, reply_markup=None, **kw):
+        self.next_id += 1
+        self.delivered.append(message_id)
+        self.markups = getattr(self, "markups", {})
+        self.markups[message_id] = [[b.url for b in row] for row in reply_markup.inline_keyboard] if reply_markup else None
+        return Sent(self.next_id)
+
+
+async def test_button_posts_are_copied_alone_with_their_buttons(db, make, monkeypatch):
+    bot = MarkupBot(existing=range(1, 9))
+
+    async def fake_list(*a, keyboards=None, **k):
+        keyboards.update({4: ([[("Watch", "https://t.me/bot?start=x")]], 1)})
+        return list(range(1, 9))
+    monkeypatch.setattr(scrape, "list_public_ids", fake_list)
+    engine, rec, job = await make(bot, username="chan")
+    await engine.start(job)
+    await wait_done(engine, job)
+    assert bot.markups == {4: [["https://t.me/bot?start=x"]]}
+    assert sorted(bot.delivered) == list(range(1, 9))
+    assert bot.calls[:2] == [[1, 2, 3], [5, 6, 7, 8]]  # plain windows on both sides of the button post
+    pairs = {r["src_id"]: r["dst_id"] for r in await db.id_map(job)}
+    assert sorted(pairs) == list(range(1, 9)) and pairs[4] == 1003 + 1 and pairs[5] == 1005
+    row = await db.job(job)
+    assert json.loads(row["opts"])["buttons_seen"] == 1 and json.loads(row["opts"])["buttons_dropped"] == 1
+    assert row["copied"] == 8
+
+
+async def test_live_post_with_buttons_keeps_them(db, make):
+    bot = MarkupBot(existing=range(1, 120))
+    engine, rec, job = await make(bot)
+    await db.update_job(job, status="done", top_id=50)
+    await db.queue_live(job, 90, None, json.dumps([[["Open", "https://example.com"]]]))
+    await db.queue_live(job, 91, None, None)
+    await engine.drain_live(job, force=True)
+    assert bot.markups == {90: [["https://example.com"]]} and 91 in bot.delivered
