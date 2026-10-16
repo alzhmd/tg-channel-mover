@@ -17,10 +17,16 @@ from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TimedOut
 
 from . import scrape
+from .emoji import load_map
 from .config import Config
 from .db import Database
 
 log = logging.getLogger("chanmover.engine")
+
+try:  # the Premium-account engine is optional (needs telethon)
+    from .userengine import FATAL as USER_FATAL, Hooks as UserHooks
+except ImportError:  # pragma: no cover
+    USER_FATAL, UserHooks = (), object
 
 # Error texts as returned by the real Bot API (checked against copyMessage / copyMessages)
 FATAL_HINTS = ("not enough rights", "chat not found", "no rights", "not a member", "kicked", "write_forbidden",
@@ -66,6 +72,8 @@ class Batch:
     windows: list[tuple[int, int, list[int]]] = field(default_factory=list)  # copied, but old->new not 1:1
     copied: int = 0
     skipped: int = 0
+    upgraded: int = 0      # Premium-account engine: posts rewritten with Premium emoji
+    buttons_lost: int = 0
 
     def merge(self, other: "Batch") -> "Batch":
         self.pairs += other.pairs
@@ -73,22 +81,28 @@ class Batch:
         self.windows += other.windows
         self.copied += other.copied
         self.skipped += other.skipped
+        self.upgraded += other.upgraded
+        self.buttons_lost += other.buttons_lost
         return self
 
 
 class ListPlan:
-    """Exact list of source ids (public channel)."""
+    """Exact list of source ids (retries, and the Premium-account engine, which reads the real list of posts)."""
     mode = "list"
 
-    def __init__(self, ids: list[int], pos: int = 0):
-        self.ids, self.pos = ids, pos
+    def __init__(self, ids: list[int], pos: int = 0, albums: dict[int, tuple[int, int]] | None = None):
+        self.ids, self.pos, self.albums = ids, pos, albums or {}
 
     @property
     def total(self) -> int:
         return len(self.ids)
 
     def next(self, n: int) -> list[int] | None:
-        return self.ids[self.pos:self.pos + n] or None
+        window = self.ids[self.pos:self.pos + n]
+        while window and window[-1] in self.albums and window[-1] < self.albums[window[-1]][1] \
+                and self.pos + len(window) < len(self.ids):
+            window.append(self.ids[self.pos + len(window)])  # an album is never split between two windows
+        return window or None
 
     def advance(self, window: list[int], hits: int) -> None:
         self.pos += len(window)
@@ -185,8 +199,8 @@ class Notifier:
 
 
 class Engine:
-    def __init__(self, bot: Bot, db: Database, cfg: Config, notifier: Notifier | None = None):
-        self.bot, self.db, self.cfg = bot, db, cfg
+    def __init__(self, bot: Bot, db: Database, cfg: Config, notifier: Notifier | None = None, user=None):
+        self.bot, self.db, self.cfg, self.user = bot, db, cfg, user
         self.notifier = notifier or Notifier()
         self.state: dict[int, RunState] = {}
         self._drain_locks: dict[int, asyncio.Lock] = {}
@@ -285,7 +299,9 @@ class Engine:
                 await self.notifier.finished(job_id)
                 return
             counters = {k: job[k] for k in ("copied", "skipped", "failed")}
-            await self.db.update_job(job_id, status="running", started_at=job["started_at"] or time.time())
+            if opts.get("backend") == "user":
+                st.bs = self.cfg.user_batch
+            await self.db.update_job(job_id, status="running", error=None, started_at=job["started_at"] or time.time())
             await self._tick(job_id, st, force=True)
             clean = 0
             while True:
@@ -319,6 +335,10 @@ class Engine:
                 if plan.mode == "range":
                     extra["top_id"] = plan.last_hit
                 await self.db.record_batch(job_id, batch.pairs, batch.failed, batch.windows, **counters, **extra)
+                if batch.upgraded or batch.buttons_lost:
+                    opts["upgraded"] = opts.get("upgraded", 0) + batch.upgraded
+                    opts["buttons_lost"] = opts.get("buttons_lost", 0) + batch.buttons_lost
+                    await self.db.update_job(job_id, opts=json.dumps(opts))
                 await self._tick(job_id, st)
                 await self._sleep(st, self.cfg.batch_delay)
             if st.stop and not st.cancel:
@@ -348,6 +368,8 @@ class Engine:
         if st.retry is not None:
             return ListPlan(st.retry)
         end = int(opts.get("to_id") or 0) or None
+        if opts.get("backend") == "user":
+            return await self._plan_user(job, opts, st, end)
         if job["started_at"] and job["mode"] == "range":  # resumed after a pause / restart
             if job["ids"]:
                 st.known = set(json.loads(job["ids"]))
@@ -388,8 +410,76 @@ class Engine:
                                  kbs=json.dumps(st.kbs) if st.kbs else None)
         return RangePlan(lo, hint, look, end=end, known=st.known)
 
+    async def _plan_user(self, job: dict, opts: dict, st: RunState, end: int | None):
+        """Plan for the Premium-account engine: the account reads the exact list of posts and where albums are."""
+        if job["ids"] and job["mode"] == "list":
+            albums = {int(k): tuple(v) for k, v in (opts.get("albums") or {}).items()}
+            return ListPlan(json.loads(job["ids"]), job["pos"], albums)
+        if not self.user or not await self.user.connect():
+            raise FatalError("اکانت پریمیوم به ربات متصل نیست (منوی اصلی ← 🌟 اکانت پریمیوم).")
+        await self.db.update_job(job["id"], status="scanning")
+        await self._tick(job["id"], st, force=True)
+
+        async def progress(found: int, newest: int) -> None:
+            await self.db.update_job(job["id"], total=found)
+            await self._tick(job["id"], st)
+            if st.cancel:
+                raise asyncio.CancelledError
+        try:
+            ids, albums = await self.user.scan(job["src"], int(opts.get("from_id") or 1), end, progress)
+        except asyncio.CancelledError:
+            if st.cancel:
+                return None
+            raise
+        opts["albums"] = {str(i): list(span) for i, span in albums.items()}
+        await self.db.update_job(job["id"], mode="list", ids=json.dumps(ids), total=len(ids), pos=0,
+                                 top_id=ids[-1] if ids else 0, started_at=time.time(), opts=json.dumps(opts))
+        return ListPlan(ids, 0, albums)
+
+    async def _copy_user(self, job: dict, opts: dict, ids: list[int], st: RunState) -> Batch:
+        await st.running.wait()
+        if st.cancel or st.stop:
+            raise Stopped
+        engine = self
+        done = await self.db.mapped(job["id"], ids)  # posts a half-finished earlier attempt already sent
+        if done:
+            ids = [i for i in ids if i not in done]
+            if not ids:
+                return Batch()
+
+        class Hooks(UserHooks):
+            async def flood(self, seconds: float) -> None:
+                st.flood_until = time.monotonic() + seconds
+                log.warning("job %s: Premium account flood wait %.0fs", job["id"], seconds)
+                await engine._tick(job["id"], st, force=True)
+                await asyncio.sleep(seconds + 1)
+
+            async def with_buttons(self, src_id: int, rows: list) -> int | None:
+                try:
+                    done = await engine._copy_plain(job, opts, [src_id], st, markup=markup_of(rows), check_stop=False)
+                except (FatalError, Stopped):
+                    return None
+                return done.pairs[0][1] if done.pairs else None
+        try:
+            res = await self.user.copy_window(
+                job["src"], job["dst"], ids, silent=bool(opts.get("silent", True)), protect=bool(opts.get("protect")),
+                no_caption=bool(opts.get("no_caption")), upgrade=bool(opts.get("upgrade", True)),
+                emoji=load_map(self.cfg.emoji_file or None, bool(opts.get("aliases"))), hooks=Hooks())
+        except Exception as e:
+            partial = getattr(e, "partial", None)
+            if partial and partial.pairs:  # keep what was sent before the error: a retry must not send it again
+                fresh = await self.db.job(job["id"])
+                await self.db.record_batch(job["id"], partial.pairs, partial.failed, [], copied=fresh["copied"] + len(partial.pairs))
+            if isinstance(e, USER_FATAL):
+                raise FatalError(f"{type(e).__name__}: {e}") from e
+            raise
+        return Batch(pairs=res.pairs, failed=res.failed, copied=len(res.pairs), skipped=res.skipped,
+                     upgraded=res.upgraded, buttons_lost=res.buttons_lost)
+
     async def _copy_ids(self, job: dict, opts: dict, ids: list[int], st: RunState) -> Batch:
         """Copy a window. Posts with URL buttons go one by one with their buttons (Telegram's copy drops them)."""
+        if opts.get("backend") == "user":
+            return await self._copy_user(job, opts, ids, st)
         if not st.kbs or not any(i in st.kbs for i in ids):
             return await self._copy_plain(job, opts, ids, st)
         batch, segment, first = Batch(), [], True

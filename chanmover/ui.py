@@ -135,6 +135,11 @@ def job_text(job, stats: dict | None = None, now: float | None = None) -> str:
     if job["mirror"]:
         lines.append("🔄 همگام‌سازی زنده: روشن" + (f" · {fa(job['live'])} پست جدید منتقل شد" if job["live"] else ""))
     extra = json.loads(job["opts"] or "{}")
+    lines.append("🌟 موتور: اکانت پریمیوم" if extra.get("backend") == "user" else "🤖 موتور: ربات")
+    if extra.get("upgraded"):
+        lines.append(f"✨ {fa(extra['upgraded'])} پست با ایموجی پریمیوم بازنویسی شد.")
+    if extra.get("buttons_lost"):
+        lines.append(f"⚠️ دکمه‌ی {fa(extra['buttons_lost'])} پست منتقل نشد (ربات به مبدا دسترسی ندارد).")
     if extra.get("buttons_seen"):
         lines.append(f"🔘 دکمه‌های شیشه‌ایِ {fa(extra['buttons_seen'])} پست همراه خودِ پست منتقل می‌شود.")
     if extra.get("buttons_dropped"):
@@ -164,6 +169,8 @@ def job_keyboard(job, active: bool) -> Kb:
                      Btn("📄 فهرست ناموفق‌ها", callback_data=f"j:{j}:fails")])
     elif job["failed"]:
         rows.append([Btn("📄 فهرست ناموفق‌ها", callback_data=f"j:{j}:fails")])
+    if s in ("done", "paused", "cancelled", "error") and job["copied"] and not active:
+        rows.append([Btn("🧹 پاک کردن پست‌های این انتقال از مقصد", callback_data=f"j:{j}:undo")])
     if s in ("done", "paused", "running"):
         rows.append([Btn("🔄 همگام‌سازی زنده: " + ("خاموش کن" if job["mirror"] else "روشن کن"), callback_data=f"j:{j}:mirror")])
     rows.append([Btn("🏠 منوی اصلی", callback_data="m:home")])
@@ -174,7 +181,7 @@ def main_keyboard() -> Kb:
     return Kb([
         [Btn("➕ انتقال جدید", callback_data="m:new")],
         [Btn("📋 انتقال‌ها", callback_data="m:jobs"), Btn("📡 کانال‌های متصل", callback_data="m:chats")],
-        [Btn("ℹ️ راهنما", callback_data="m:help")],
+        [Btn("🌟 اکانت پریمیوم", callback_data="m:premium"), Btn("ℹ️ راهنما", callback_data="m:help")],
     ])
 
 

@@ -81,3 +81,15 @@ async def test_channel_post_with_url_buttons_is_queued_with_them(db, cfg, make_j
     await on_channel_post(update, ctx)
     row = (await db.live_queue(job["id"]))[0]
     assert row["src_id"] == 77 and json.loads(row["markup"]) == [[["Watch", "https://t.me/bot?start=1"]]]
+
+
+async def test_undo_lists_every_post_the_job_created(db, make_job):
+    job = await make_job(ids=[1, 2, 3], pos=3)
+    await db.c.execute("INSERT INTO msgmap(job_id,src_id,dst_id) VALUES(?,?,?)", (job["id"], 1, 100))
+    await db.c.execute("INSERT INTO msgmap(job_id,src_id,dst_id) VALUES(?,?,?)", (job["id"], 2, 101))
+    await db.c.execute("INSERT INTO windows(job_id,first_src,last_src,dst_ids) VALUES(?,?,?,?)", (job["id"], 3, 9, "[102, 103]"))
+    await db.c.commit()
+    assert await db.copied_dst_ids(job["id"]) == [100, 101, 102, 103]
+    await db.forget_job_copies(job["id"])
+    row = await db.job(job["id"])
+    assert await db.copied_dst_ids(job["id"]) == [] and row["status"] == "cancelled" and row["copied"] == 0 and not row["mirror"]

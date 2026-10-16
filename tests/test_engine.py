@@ -281,3 +281,115 @@ async def test_live_post_with_buttons_keeps_them(db, make):
     await db.queue_live(job, 91, None, None)
     await engine.drain_live(job, force=True)
     assert bot.markups == {90: [["https://example.com"]]} and 91 in bot.delivered
+
+
+class FakeUser:
+    """Stands in for UserBackend: knows its posts and albums, 'copies' them to ids 5000+src."""
+
+    def __init__(self, ids, albums=None, fatal=None):
+        self.ids, self.albums, self.fatal = ids, albums or {}, fatal
+        self.windows: list[list[int]] = []
+        self.kwargs: dict = {}
+        self.button_new = None
+
+    async def connect(self):
+        return True
+
+    async def scan(self, src, lo, hi, progress):
+        return list(self.ids), dict(self.albums)
+
+    async def copy_window(self, src, dst, ids, hooks=None, **kw):
+        from chanmover.userengine import Result
+        if self.fatal:
+            raise self.fatal
+        self.windows.append(list(ids))
+        self.kwargs = kw
+        res = Result()
+        for i in ids:
+            if i == 13 and hooks:  # a post with URL buttons: the engine's bot carries it
+                self.button_new = await hooks.with_buttons(i, [[["Watch", "https://t.me/bot?start=1"]]])
+                res.pairs.append((i, self.button_new or 9999))
+                continue
+            res.pairs.append((i, 5000 + i))
+        res.upgraded = len(ids) // 2
+        return res
+
+
+async def test_user_engine_never_splits_an_album_and_keeps_exact_pairs(db, make, cfg):
+    user = FakeUser(ids=list(range(1, 31)), albums={i: (8, 12) for i in range(8, 13)})
+    engine, rec, job = await make(MarkupBot(existing=range(1, 31)), {"backend": "user", "upgrade": True})
+    engine.user = user
+    await engine.start(job)
+    await wait_done(engine, job)
+    assert all(not (set(range(8, 13)) & set(w)) or set(range(8, 13)) <= set(w) for w in user.windows)  # album whole
+    assert sum(len(w) for w in user.windows) == 30 and max(len(w) for w in user.windows) <= cfg.user_batch + 4
+    pairs = {r["src_id"]: r["dst_id"] for r in await db.id_map(job)}
+    assert len(pairs) == 30 and pairs[5] == 5005
+    row = await db.job(job)
+    assert row["status"] == "done" and row["copied"] == 30 and row["mode"] == "list"
+    assert json.loads(row["opts"])["upgraded"] > 0 and user.kwargs["silent"] is True and user.kwargs["upgrade"] is True
+
+
+async def test_user_engine_posts_with_buttons_go_through_the_bot(db, make):
+    bot = MarkupBot(existing=range(1, 31))
+    user = FakeUser(ids=list(range(1, 21)))
+    engine, rec, job = await make(bot, {"backend": "user"})
+    engine.user = user
+    await engine.start(job)
+    await wait_done(engine, job)
+    assert bot.markups == {13: [["https://t.me/bot?start=1"]]} and user.button_new == 1001
+
+
+async def test_user_engine_fatal_error_stops_the_job(db, make):
+    from telethon import errors
+    user = FakeUser(ids=[1, 2, 3], fatal=errors.ChatWriteForbiddenError(request=None))
+    engine, rec, job = await make(FakeBot(existing=[]), {"backend": "user"})
+    engine.user = user
+    await engine.start(job)
+    await wait_done(engine, job)
+    assert (await db.job(job))["status"] == "error" and rec.failed_jobs
+
+
+async def test_user_engine_without_a_connected_account_says_so(db, make):
+    engine, rec, job = await make(FakeBot(existing=[]), {"backend": "user"})
+    await engine.start(job)
+    await wait_done(engine, job)
+    row = await db.job(job)
+    assert row["status"] == "error" and "اکانت پریمیوم" in row["error"]
+
+
+async def test_user_engine_resumes_from_the_saved_list(db, make):
+    user = FakeUser(ids=list(range(1, 41)))
+    engine, rec, job = await make(FakeBot(existing=[]), {"backend": "user"})
+    engine.user = user
+    await db.update_job(job, ids=json.dumps(list(range(1, 41))), mode="list", total=40, pos=30, started_at=1.0)
+    await engine.start(job)
+    await wait_done(engine, job)
+    assert [i for w in user.windows for i in w] == list(range(31, 41))
+
+
+async def test_user_engine_does_not_resend_what_a_crashed_window_already_sent(db, make):
+    class Crashy(FakeUser):
+        crashed = False
+
+        async def copy_window(self, src, dst, ids, hooks=None, **kw):
+            from chanmover.userengine import Result
+            if not Crashy.crashed and 4 in ids:
+                Crashy.crashed = True
+                err = RuntimeError("boom")
+                err.partial = Result(pairs=[(i, 5000 + i) for i in ids if i < 4])
+                raise err
+            return await super().copy_window(src, dst, ids, hooks=hooks, **kw)
+
+    user = Crashy(ids=list(range(1, 11)))
+    engine, rec, job = await make(FakeBot(existing=[]), {"backend": "user"})
+    engine.user = user
+    await engine.start(job)
+    await wait_done(engine, job)
+    assert (await db.job(job))["status"] == "error"
+    await engine.start(job)  # "continue"
+    await wait_done(engine, job)
+    sent = [i for w in user.windows for i in w]
+    assert sorted(sent) == list(range(4, 11)) and len(sent) == len(set(sent))  # 1-3 were sent by the crashed attempt
+    row = await db.job(job)
+    assert row["status"] == "done" and row["copied"] == 10 and row["error"] is None

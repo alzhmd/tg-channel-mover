@@ -13,14 +13,14 @@ from telegram.error import BadRequest, RetryAfter, TelegramError
 from telegram.ext import (Application, CallbackQueryHandler, ChatMemberHandler, CommandHandler, ContextTypes,
                           MessageHandler, filters)
 
-from . import ui
+from . import premium_ui, ui
 from .engine import Engine, Notifier
 from .ui import esc, fa
 
 log = logging.getLogger("chanmover.bot")
 
 DEFAULT_OPTS = {"silent": True, "mirror": True, "protect": False, "no_caption": False,
-                "from_id": None, "to_id": None, "hint_top": None}
+                "from_id": None, "to_id": None, "hint_top": None, "backend": "bot", "upgrade": True, "aliases": False}
 _DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
 MEMBER_STATES = (S.ADMINISTRATOR, S.MEMBER, S.OWNER)
 CHAT_TYPES = (ChatType.CHANNEL, ChatType.SUPERGROUP, ChatType.GROUP)
@@ -56,6 +56,17 @@ async def show(update: Update, text: str, kb: Kb | None = None) -> None:
         await update.effective_message.reply_text(text, reply_markup=kb)
 
 
+async def default_opts(context: ContextTypes.DEFAULT_TYPE) -> dict:
+    """Options for a new transfer. The engine is chosen smartly: a connected Premium account keeps and upgrades the
+    Premium emoji (a bot cannot do that in channels), otherwise the bot copies."""
+    opts = dict(DEFAULT_OPTS)
+    user = premium_ui.get_user(context)
+    info = await user.whoami() if user else None
+    if info and info["premium"]:
+        opts["backend"] = "user"
+    return opts
+
+
 def draft(context: ContextTypes.DEFAULT_TYPE) -> dict:
     return context.user_data.setdefault("draft", {"src": None, "dst": None, "opts": dict(DEFAULT_OPTS)})
 
@@ -87,8 +98,10 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     elif where == "help":
         await show(update, ui.HELP_TEXT, ui.back_home())
     elif where == "new":
-        context.user_data["draft"] = {"src": None, "dst": None, "opts": dict(DEFAULT_OPTS)}
+        context.user_data["draft"] = {"src": None, "dst": None, "opts": await default_opts(context)}
         await screen_pick(update, context, "src")
+    elif where == "premium":
+        await premium_ui.screen_premium(update, context)
     elif where == "jobs":
         await screen_jobs(update, context)
     elif where in ("chats", "chatsref"):
@@ -115,6 +128,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def refresh_chats(context: ContextTypes.DEFAULT_TYPE) -> None:
     db, _, _ = deps(context)
     for row in await db.list_chats():
+        if row["via"] == "user":
+            continue
         try:
             chat = await context.bot.get_chat(row["id"])
             me = await context.bot.get_chat_member(row["id"], context.bot.id)
@@ -192,17 +207,33 @@ async def screen_opts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if o["from_id"] or o["to_id"]:
         rng = f"از شناسه‌ی {fa(o['from_id'] or 1)} تا {fa(o['to_id']) if o['to_id'] else 'آخر'}"
     onoff = lambda v: "روشن ✅" if v else "خاموش"
+    user = premium_ui.get_user(context)
+    info = await user.whoami() if user else None
+    is_user = o["backend"] == "user"
+    if is_user:
+        engine_note = ("🌟 <b>موتور اکانت پریمیوم</b>: ایموجی‌های ویژه‌ی پست‌ها حفظ می‌شود و ایموجی‌های معمولی خودکار پریمیوم "
+                       "می‌شوند. نام فرستنده و «فوروارد از …» حذف می‌شود.")
+    else:
+        engine_note = ("🤖 <b>موتور ربات</b>: سریع، ولی تلگرام به ربات‌ها اجازه نمی‌دهد در کانال ایموجی پریمیوم بگذارند؛ ایموجی‌های ویژه‌ی "
+                       "پست‌ها در مقصد ساده می‌شوند." + ("" if info else " برای حفظ آن‌ها «🌟 اکانت پریمیوم» را از منوی اصلی وصل کنید."))
     text = (f"۳️⃣ <b>تنظیمات انتقال</b>\n\n📤 مبدا: {ui.chat_label(src['title'], src['username'])}\n"
-            f"📥 مقصد: {ui.chat_label(dst['title'], dst['username'])}\n\n"
-            "نام فرستنده و «فوروارد از …» در همه‌ی حالت‌ها حذف می‌شود.")
-    rows = [
+            f"📥 مقصد: {ui.chat_label(dst['title'], dst['username'])}\n\n{engine_note}")
+    rows = []
+    if info:
+        rows.append([Btn("موتور: " + ("🌟 اکانت پریمیوم" if is_user else "🤖 ربات") + "  (تغییر)", callback_data="w:t:engine")])
+    rows += [
         [Btn(f"📅 محدوده: {rng}", callback_data="w:range")],
         [Btn(f"🔕 ارسال بی‌صدا: {onoff(o['silent'])}", callback_data="w:t:silent")],
         [Btn(f"🔄 همگام‌سازی پست‌های جدید: {onoff(o['mirror'])}", callback_data="w:t:mirror")],
-        [Btn(f"🔒 محافظت از محتوا در مقصد: {onoff(o['protect'])}", callback_data="w:t:protect")],
-        [Btn(f"🚫 حذف کپشن‌ها: {onoff(o['no_caption'])}", callback_data="w:t:no_caption")],
     ]
-    if not src["username"]:
+    if is_user:
+        rows.append([Btn(f"✨ ایموجی معمولی ← پریمیوم: {onoff(o['upgrade'])}", callback_data="w:t:upgrade")])
+        if o["upgrade"]:
+            rows.append([Btn(f"🔁 جایگزین نزدیک برای ایموجی بی‌معادل (🎥←📹): {onoff(o['aliases'])}", callback_data="w:t:aliases")])
+    else:
+        rows.append([Btn(f"🔒 محافظت از محتوا در مقصد: {onoff(o['protect'])}", callback_data="w:t:protect")])
+    rows.append([Btn(f"🚫 حذف کپشن‌ها: {onoff(o['no_caption'])}", callback_data="w:t:no_caption")])
+    if not src["username"] and not is_user:
         rows.append([Btn("📍 آخرین پست مبدا: " + (fa(o["hint_top"]) if o["hint_top"] else "تعیین نشده"), callback_data="w:hint")])
     rows.append([Btn("🚀 ادامه", callback_data="w:go"), Btn("✖️ انصراف", callback_data="m:home")])
     await show(update, text, Kb(rows))
@@ -230,7 +261,11 @@ async def on_wizard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                            "ℹ️ ربات باید قبلاً ادمین آن کانال شده باشد؛ لینک دعوت خصوصی را ربات نمی‌تواند باز کند.",
                    Kb([[Btn("✖️ انصراف", callback_data="m:home")]]))
     elif action == "t":
-        d["opts"][parts[2]] = not d["opts"][parts[2]]
+        key = parts[2]
+        if key == "engine":
+            d["opts"]["backend"] = "bot" if d["opts"]["backend"] == "user" else "user"
+        else:
+            d["opts"][key] = not d["opts"][key]
         await screen_opts(update, context)
     elif action == "range":
         context.user_data["await"] = {"kind": "range"}
@@ -272,6 +307,8 @@ async def preflight(context: ContextTypes.DEFAULT_TYPE, d: dict) -> str | None:
     (title / username may have changed since the bot was added)."""
     bot = context.bot
     db, _, _ = deps(context)
+    if d["opts"]["backend"] == "user":
+        return await preflight_user(context, d)
     for label, cid in (("مبدا", d["src"]), ("مقصد", d["dst"])):
         try:
             chat = await bot.get_chat(cid)
@@ -285,6 +322,35 @@ async def preflight(context: ContextTypes.DEFAULT_TYPE, d: dict) -> str | None:
         await db.upsert_chat(chat.id, chat.title or str(chat.id), chat.username, chat.type, can_post(chat.type, me))
         if label == "مبدا" and getattr(chat, "has_protected_content", False):
             return "کانال مبدا «محدودیت ذخیره و فوروارد» دارد و تلگرام اجازه‌ی کپی پست‌هایش را نمی‌دهد. اول آن را خاموش کنید."
+    return None
+
+
+async def preflight_user(context: ContextTypes.DEFAULT_TYPE, d: dict) -> str | None:
+    """Premium-account engine: the account must read the source and be an admin who can post in the destination."""
+    db, _, _ = deps(context)
+    user = premium_ui.get_user(context)
+    info = await user.whoami() if user else None
+    if not info:
+        return "اکانت پریمیوم به ربات وصل نیست. از منوی اصلی «🌟 اکانت پریمیوم» را وصل کنید، یا موتور را روی «ربات» بگذارید."
+    err = await user.check_access(d["src"], d["dst"])
+    if err:
+        return err
+    for cid in (d["src"], d["dst"]):
+        ent = await user.client.get_entity(cid)
+        row = await db.get_chat(cid)
+        await db.upsert_chat(cid, ent.title, getattr(ent, "username", None), row["type"] if row else "channel",
+                             bool(row and row["can_post"]), via=row["via"] if row else "user")
+        if cid == d["src"] and getattr(ent, "noforwards", False):
+            return "کانال مبدا «محدودیت ذخیره و فوروارد» دارد و تلگرام اجازه‌ی کپی پست‌هایش را نمی‌دهد. اول آن را خاموش کنید."
+    if not info["premium"]:
+        d["opts"]["upgrade"] = False  # a non-Premium account cannot place Premium emoji
+    try:  # live mirroring and URL buttons rely on the bot seeing the source
+        me = await context.bot.get_chat_member(d["src"], context.bot.id)
+        seen = me.status in MEMBER_STATES
+    except TelegramError:
+        seen = False
+    if not seen:
+        d["opts"]["mirror"] = False
     return None
 
 
@@ -325,6 +391,9 @@ async def register_chat(context: ContextTypes.DEFAULT_TYPE, ref) -> tuple[object
     try:
         chat = await context.bot.get_chat(ref)
     except TelegramError:
+        row = await register_via_user(context, ref)
+        if row:
+            return row, None
         return None, "کانالی با این مشخصات پیدا نشد. یوزرنیم را بررسی کنید، یا یکی از پست‌هایش را فوروارد کنید."
     if chat.type not in CHAT_TYPES:
         return None, "این یک کانال یا گروه نیست."
@@ -333,15 +402,42 @@ async def register_chat(context: ContextTypes.DEFAULT_TYPE, ref) -> tuple[object
     except TelegramError:
         me = None
     if not me or me.status not in MEMBER_STATES:
+        row = await register_via_user(context, ref)
+        if row:
+            return row, None
         return None, ("ربات عضو این کانال نیست؛ بدون عضویت نمی‌تواند پست‌ها را بخواند. ربات را ادمین کانال کنید و دوباره تلاش کنید.")
     await db.upsert_chat(chat.id, chat.title or str(chat.id), chat.username, chat.type, can_post(chat.type, me))
     return await db.get_chat(chat.id), None
+
+
+async def register_via_user(context: ContextTypes.DEFAULT_TYPE, ref):
+    """A chat only the connected Premium account can see (the bot is not in it): usable with the Premium engine."""
+    from telethon import utils
+    db, _, _ = deps(context)
+    user = premium_ui.get_user(context)
+    if not user or not await user.connect():
+        return None
+    try:
+        ent = await user.client.get_entity(ref)
+        perms = await user.client.get_permissions(ent, "me")
+    except Exception:
+        return None
+    if not getattr(ent, "title", None):
+        return None
+    chat_id = utils.get_peer_id(ent)
+    can = bool(perms.is_creator or (perms.is_admin and perms.post_messages))
+    await db.upsert_chat(chat_id, ent.title, getattr(ent, "username", None), "channel" if getattr(ent, "broadcast", False) else "supergroup",
+                         can, via="user")
+    return await db.get_chat(chat_id)
 
 
 async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await authorized(update, context):
         return
     msg = update.effective_message
+    if msg.text and premium_ui.waiting_for_password(context, msg.chat_id):
+        await premium_ui.handle_password(update, context, msg.text)
+        return
     aw = context.user_data.get("await")
     if not aw:
         await show(update, ui.MAIN_TEXT, ui.main_keyboard())
@@ -451,8 +547,39 @@ async def on_job(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await q.message.reply_text("\n".join(lines))
     elif action == "skipped":
         await send_skipped(update, context, job)
+    elif action == "undo":
+        if engine.is_active(job_id):
+            await q.answer("اول انتقال را متوقف یا لغو کنید.", show_alert=True)
+            return
+        n = len(await db.copied_dst_ids(job_id))
+        await show(update, f"🧹 <b>{fa(n)} پستی</b> که انتقال #{fa(job_id)} در {ui.chat_label(job['dst_title'])} ساخته پاک شود؟\n"
+                           "فقط همین پست‌ها پاک می‌شوند؛ کانال مبدا و بقیه‌ی پست‌های مقصد دست نمی‌خورد. این کار برگشت ندارد.",
+                   Kb([[Btn("بله، پاک کن", callback_data=f"j:{job_id}:undo2"), Btn("نه", callback_data=f"j:{job_id}:view")]]))
+    elif action == "undo2":
+        await undo_job(update, context, job)
     elif action == "export":
         await send_export(update, context, job)
+
+
+async def undo_job(update: Update, context: ContextTypes.DEFAULT_TYPE, job) -> None:
+    """Deletes exactly the posts a job created in its destination, then forgets the job's copies."""
+    db, engine, _ = deps(context)
+    ids = await db.copied_dst_ids(job["id"])
+    opts = json.loads(job["opts"] or "{}")
+    try:
+        user = premium_ui.get_user(context)
+        if opts.get("backend") == "user" and user:
+            await user.client.delete_messages(await user.peer(job["dst"]), ids)
+        else:
+            for i in range(0, len(ids), 100):
+                await context.bot.delete_messages(job["dst"], ids[i:i + 100])
+    except TelegramError as e:
+        await show(update, f"❌ پاک نشد: <code>{esc(str(e)[:150])}</code>\nربات باید در مقصد دسترسی «حذف پیام» داشته باشد.",
+                   Kb([[Btn("↩️ برگشت", callback_data=f"j:{job['id']}:view")]]))
+        return
+    await db.forget_job_copies(job["id"])
+    await show(update, f"🧹 {fa(len(ids))} پست از مقصد پاک شد و انتقال #{fa(job['id'])} بسته شد. می‌توانید دوباره شروع کنید.",
+               Kb([[Btn("➕ انتقال جدید", callback_data="m:new")], [Btn("🏠 منوی اصلی", callback_data="m:home")]]))
 
 
 SKIPPED_EXPLAIN = (
@@ -539,8 +666,10 @@ class UiNotifier(Notifier):
         if not job:
             return
         head = {"done": "✅ انتقال کامل شد", "cancelled": "⛔ انتقال لغو شد"}.get(job["status"], "ℹ️ انتقال پایان یافت")
+        up = json.loads(job["opts"] or "{}").get("upgraded")
         text = (f"{head} — #{fa(job_id)}\n{ui.chat_label(job['src_title'])} ← {ui.chat_label(job['dst_title'])}\n\n"
-                f"✅ کپی‌شده: <b>{fa(job['copied'])}</b>\n⏭ ردشده: {fa(job['skipped'])}\n⚠️ ناموفق: {fa(job['failed'])}")
+                f"✅ کپی‌شده: <b>{fa(job['copied'])}</b>\n⏭ ردشده: {fa(job['skipped'])}\n⚠️ ناموفق: {fa(job['failed'])}"
+                + (f"\n✨ بازنویسی با ایموجی پریمیوم: {fa(up)}" if up else ""))
         if job["status"] == "done" and job["mirror"]:
             text += "\n\n🔄 همگام‌سازی زنده روشن است؛ پست‌های جدید مبدا خودکار منتقل می‌شوند."
         await self.app.bot.send_message(job["owner"], text, reply_markup=Kb(
@@ -611,6 +740,7 @@ def register(app: Application) -> None:
     app.add_handler(CallbackQueryHandler(on_menu, pattern=r"^m:"))
     app.add_handler(CallbackQueryHandler(on_wizard, pattern=r"^w:"))
     app.add_handler(CallbackQueryHandler(on_job, pattern=r"^j:\d+:\w+$"))
+    app.add_handler(CallbackQueryHandler(premium_ui.on_premium, pattern=r"^p:"))
     app.add_handler(ChatMemberHandler(on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(MessageHandler(filters.UpdateType.CHANNEL_POST, on_channel_post))
     app.add_handler(MessageHandler(private & ~filters.COMMAND, on_message))
