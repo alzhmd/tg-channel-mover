@@ -1,4 +1,5 @@
 import dataclasses
+import json
 
 import pytest
 
@@ -74,4 +75,15 @@ def make(db, cfg):
         await db.upsert_chat(-200, "dst", None, "channel", True)
         job_id = await db.create_job(await db.get_chat(-100), await db.get_chat(-200), opts or {}, 1)
         return engine, rec, job_id
+    return _make
+
+
+@pytest.fixture
+def make_job(db):
+    async def _make(ids, pos):
+        await db.upsert_chat(-100, "src", None, "channel", False)
+        await db.upsert_chat(-200, "dst", None, "channel", True)
+        job_id = await db.create_job(await db.get_chat(-100), await db.get_chat(-200), {}, 1)
+        await db.update_job(job_id, ids=json.dumps(ids), pos=pos)
+        return await db.job(job_id)
     return _make

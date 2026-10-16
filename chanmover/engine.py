@@ -13,7 +13,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
-from telegram import Bot
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TimedOut
 
 from . import scrape
@@ -53,6 +53,10 @@ def classify(exc: Exception) -> str:
 
 def seconds(value) -> float:
     return value.total_seconds() if hasattr(value, "total_seconds") else float(value)
+
+
+def markup_of(rows: list) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton(text, url=url) for text, url in row] for row in rows])
 
 
 @dataclass
@@ -169,6 +173,7 @@ class RunState:
     flood_until: float = 0.0
     retry: list[int] | None = None
     known: set[int] | None = None  # ids the web preview showed; lets old->new pairs stay exact around gaps
+    kbs: dict[int, list] | None = None  # post id -> URL-button rows, copied one by one with their buttons
     trailing: int = 0  # empty ids seen since the last post; only counted as skipped once a later post shows up
 
 
@@ -346,13 +351,15 @@ class Engine:
         if job["started_at"] and job["mode"] == "range":  # resumed after a pause / restart
             if job["ids"]:
                 st.known = set(json.loads(job["ids"]))
+            if job["kbs"]:
+                st.kbs = {int(k): v for k, v in json.loads(job["kbs"]).items()}
             look = 60 if job["ids"] else self.cfg.lookahead
             return RangePlan(job["start_pos"], job["total"], look, job["pos"], job["top_id"], end, st.known)
         lo = int(opts.get("from_id") or 1)
         await self.db.update_job(job["id"], status="scanning")
         await self._tick(job["id"], st, force=True)
         ids: list[int] = []
-        with_buttons: set[int] = set()
+        keyboards: dict = {}
         if job["src_username"]:
             async def progress(found: int, oldest: int) -> None:
                 await self.db.update_job(job["id"], total=found)
@@ -361,7 +368,7 @@ class Engine:
                     raise asyncio.CancelledError
             try:
                 ids = await scrape.list_public_ids(job["src_username"], lo, end, self.cfg.scrape_delay, progress,
-                                                   buttons=with_buttons)
+                                                   keyboards=keyboards)
             except asyncio.CancelledError:
                 if st.cancel:
                     return None
@@ -372,25 +379,53 @@ class Engine:
         st.known = set(ids) or None
         # with a preview the newest id is known (only unlisted album members can follow it); without, scan further
         look = 60 if ids else self.cfg.lookahead
-        if with_buttons:  # shown to the owner: Telegram drops inline buttons when copying
-            opts["buttons_seen"] = len(with_buttons)
+        st.kbs = {i: rows for i, (rows, _) in keyboards.items() if rows} or None
+        if keyboards:  # shown to the owner: URL buttons travel with the post, other kinds cannot
+            opts["buttons_seen"] = len(st.kbs or {})
+            opts["buttons_dropped"] = sum(dropped for _, dropped in keyboards.values())
         await self.db.update_job(job["id"], mode="range", ids=json.dumps(ids) if ids else None, total=hint, pos=lo,
-                                 start_pos=lo, started_at=time.time(), opts=json.dumps(opts))
+                                 start_pos=lo, started_at=time.time(), opts=json.dumps(opts),
+                                 kbs=json.dumps(st.kbs) if st.kbs else None)
         return RangePlan(lo, hint, look, end=end, known=st.known)
 
     async def _copy_ids(self, job: dict, opts: dict, ids: list[int], st: RunState) -> Batch:
-        """Copy `ids` in one call; on an unexplained error split the window until the bad message is isolated."""
+        """Copy a window. Posts with URL buttons go one by one with their buttons (Telegram's copy drops them)."""
+        if not st.kbs or not any(i in st.kbs for i in ids):
+            return await self._copy_plain(job, opts, ids, st)
+        batch, segment, first = Batch(), [], True
+        for i in ids:
+            if i not in st.kbs:
+                segment.append(i)
+                continue
+            if segment:
+                batch.merge(await self._copy_plain(job, opts, segment, st, check_stop=first))
+                segment, first = [], False
+            batch.merge(await self._copy_plain(job, opts, [i], st, markup=markup_of(st.kbs[i]), check_stop=first))
+            first = False
+        if segment:
+            batch.merge(await self._copy_plain(job, opts, segment, st, check_stop=first))
+        return batch
+
+    async def _copy_plain(self, job: dict, opts: dict, ids: list[int], st: RunState, markup=None,
+                          check_stop: bool = True) -> Batch:
+        """Copy `ids` in one call; on an unexplained error split the window until the bad message is isolated.
+
+        `check_stop` is off for the later parts of a window already under way, so a shutdown never leaves a window
+        half copied and unrecorded."""
         net_tries = 0
         while True:
             await st.running.wait()
-            if st.cancel or st.stop:
+            if check_stop and (st.cancel or st.stop):
                 raise Stopped
             try:
-                res = await self.bot.copy_messages(
-                    chat_id=job["dst"], from_chat_id=job["src"], message_ids=ids,
-                    disable_notification=bool(opts.get("silent", True)),
-                    protect_content=True if opts.get("protect") else None,
-                    remove_caption=True if opts.get("no_caption") else None, **SEND_TIMEOUTS)
+                common = dict(chat_id=job["dst"], from_chat_id=job["src"],
+                              disable_notification=bool(opts.get("silent", True)),
+                              protect_content=True if opts.get("protect") else None, **SEND_TIMEOUTS)
+                if markup is not None:
+                    res = [await self.bot.copy_message(message_id=ids[0], reply_markup=markup, **common)]
+                else:
+                    res = await self.bot.copy_messages(message_ids=ids, remove_caption=True if opts.get("no_caption") else None,
+                                                       **common)
             except RetryAfter as e:
                 wait = seconds(e.retry_after) + 1
                 st.flood_until = time.monotonic() + wait
@@ -405,14 +440,18 @@ class Engine:
                     raise FatalError(str(e)) from e
                 if kind == "empty":
                     return Batch(skipped=len(ids))
+                if markup is not None and kind == "other":  # Telegram refused the buttons: still copy the post itself
+                    log.warning("job %s: id %s: buttons rejected (%s), copying without them", job["id"], ids[0], e)
+                    markup = None
+                    continue
                 if len(ids) == 1:
                     if kind == "unsupported":  # e.g. a "pinned a message" notice: nothing to copy, not a failure
                         log.info("job %s: id %s is not copyable (%s)", job["id"], ids[0], e)
                         return Batch(skipped=1)
                     return Batch(failed=[(ids[0], str(e))])
                 mid = len(ids) // 2
-                first = await self._copy_ids(job, opts, ids[:mid], st)
-                return first.merge(await self._copy_ids(job, opts, ids[mid:], st))
+                first = await self._copy_plain(job, opts, ids[:mid], st, check_stop=check_stop)
+                return first.merge(await self._copy_plain(job, opts, ids[mid:], st, check_stop=False))
             except Forbidden as e:
                 raise FatalError(str(e)) from e
             except (TimedOut, NetworkError) as e:  # BadRequest is a NetworkError too, so it is handled above
@@ -461,13 +500,14 @@ class Engine:
             ready = [r for r in ready if r["src_id"] not in set(stale)]
             groups: list[list[int]] = []
             last_grp = None
-            for r in ready:  # an album is one group; everything else is copied alone
-                if r["grp"] and r["grp"] == last_grp:
+            for r in ready:  # an album is one group; a post with buttons and everything else is copied alone
+                if r["grp"] and r["grp"] == last_grp and not r["markup"]:
                     groups[-1].append(r["src_id"])
                 else:
                     groups.append([r["src_id"]])
                 last_grp = r["grp"]
             st = RunState(bs=self.cfg.batch_size)
+            st.kbs = {r["src_id"]: json.loads(r["markup"]) for r in ready if r["markup"]} or None
             st.running.set()
             for ids in groups:
                 try:

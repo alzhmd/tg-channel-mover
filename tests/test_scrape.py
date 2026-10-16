@@ -30,7 +30,18 @@ def test_parse_ids_ignores_other_channels():
     assert scrape.parse_ids(page([3, 1, 2]) + page([9], "Other"), "chan") == [1, 2, 3]
 
 
-def test_parse_button_ids():
-    html = ('<div class="tgme_widget_message_wrap"><div data-post="Chan/5"></div><a class="tgme_widget_message_inline_button"></a></div>'
-            '<div class="tgme_widget_message_wrap"><div data-post="Chan/6"></div></div>')
-    assert scrape.parse_button_ids(html, "chan") == {5}
+def test_parse_keyboards():
+    html = (
+        '<div class="tgme_widget_message_wrap"><div data-post="Chan/5"></div><div class="tgme_widget_message_inline_keyboard">'
+        '<div class="tgme_widget_message_inline_row">'
+        '<a class="tgme_widget_message_inline_button url_button" href="https://t.me/bot?start=a&amp;b=1" target="_blank">'
+        '<span class="tgme_widget_message_inline_button_text" dir="auto"><i class="emoji"><b>🎬</b></i> تماشا</span></a>'
+        '<a class="tgme_widget_message_inline_button" href="https://t.me/Chan/5"><span class="tgme_widget_message_inline_button_text">cb</span></a>'
+        '</div><div class="tgme_widget_message_inline_row">'
+        '<a class="tgme_widget_message_inline_button url_button" href="https://example.com/"><span class="tgme_widget_message_inline_button_text">سایت</span></a>'
+        '</div></div></div>'
+        '<div class="tgme_widget_message_wrap"><div data-post="Chan/6"></div></div>')
+    found = scrape.parse_keyboards(html, "chan")
+    assert list(found) == [5]
+    rows, dropped = found[5]
+    assert rows == [[("🎬 تماشا", "https://t.me/bot?start=a&b=1")], [("سایت", "https://example.com/")]] and dropped == 1

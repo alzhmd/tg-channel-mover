@@ -15,6 +15,7 @@
 - منوی کامل فارسی با دکمه: انتخاب مبدا و مقصد، تنظیمات، شروع، **توقف / ادامه / لغو** و نوار پیشرفت زنده (۰ تا ۱۰۰٪، سرعت، زمان باقی‌مانده)
 - کپی سمت سرور تلگرام (`copyMessages`)؛ فایلی دانلود یا آپلود نمی‌شود، پس سریع است و محدودیت ۲۰ مگابایتی ربات‌ها ندارد
 - ترتیب اصلی پست‌ها حفظ می‌شود و آلبوم‌ها کنار هم می‌مانند
+- **دکمه‌های شیشه‌ای لینک‌دار** (مثل «تماشا» که به ربات یا سایت می‌رود) همراه پست منتقل می‌شوند؛ هم برای تاریخچه، هم برای پست‌های جدید
 - **ادامه‌ی خودکار** بعد از ری‌استارت ربات یا سرور؛ مدیریت خودکار محدودیت سرعت تلگرام (flood wait)
 - **همگام‌سازی زنده**: پست‌های جدیدِ مبدا بعد از پایان کپی تاریخچه، خودکار به مقصد می‌روند
 - خروجی CSV «شناسه‌ی قدیم ← شناسه‌ی جدید» برای اصلاح لینک‌ها و فهرست‌های قدیمی
@@ -45,7 +46,9 @@ cp .env.example .env && chmod 600 .env     # BOT_TOKEN و ADMIN_IDS را پر ک
   صبر می‌کند. برای کانال‌های ده‌ها هزار پستی چند ساعت زمان لازم است؛ ربات خودش ادامه می‌دهد.
 - تاریخ پست‌ها در مقصد، زمان کپی است (تلگرام اجازه‌ی تغییر نمی‌دهد). پیش‌فرض ارسال **بی‌صدا** است تا اعضا نوتیف نگیرند؛ مقصد را تا پایان کار عمومی نکنید.
 - کانال مبدا نباید «محدودیت ذخیره و فوروارد» داشته باشد؛ تلگرام کپی چنین پست‌هایی را ممنوع می‌کند.
-- لینک‌های داخل متن پست‌ها (مثل `t.me/مبدا/123`) خودکار عوض نمی‌شوند؛ از خروجی CSV استفاده کنید. دکمه‌های اینلاین و پیام‌های سرویس (پین، عضویت) کپی نمی‌شوند؛ پیام‌های غیرقابل‌کپی «ردشده» شمرده می‌شوند.
+- لینک‌های داخل متن پست‌ها (مثل `t.me/مبدا/123`) خودکار عوض نمی‌شوند؛ از خروجی CSV استفاده کنید.
+- تلگرام در کپی، دکمه‌های شیشه‌ای را حذف می‌کند؛ ربات آن‌ها را از پیش‌نمایش عمومیِ کانال می‌خواند و دوباره می‌گذارد. این فقط برای **کانال مبدای عمومی** ممکن است (برای مبدای خصوصی آن را موقتاً عمومی کنید)، و فقط دکمه‌های **لینکی**؛ دکمه‌های «کالبک» فقط داخل ربات سازنده‌شان کار می‌کنند و منتقل نمی‌شوند (تعدادشان در گزارش می‌آید).
+- پیام‌های سرویس (پین، ساخت کانال) و نوع‌هایی که تلگرام کپی نمی‌کند «ردشده» شمرده می‌شوند؛ دکمه‌ی «ردشده‌ها چیست؟» در ربات توضیح و فهرست می‌دهد.
 - ربات نمی‌تواند لینک دعوت خصوصی (`t.me/+…`) را باز کند؛ باید ادمین آن کانال باشد.
 - اگر پروسه وسط کار با کشته شدن ناگهانی (kill -9 / قطع برق) قطع شود، ممکن است یک «پنجره»‌ی کوچک (حداکثر `BATCH_SIZE` پست) در مقصد تکراری شود؛ ری‌استارت معمولی بی‌خطر است.
 
@@ -84,7 +87,7 @@ A Telegram bot that **copies a whole channel into another one** — first post t
 and albums. Built for the moment a source channel is about to disappear and the audience moves to a new one, and for
 repeating that as often as needed.
 
-**Features:** Persian button UI (pick source/destination, options, start, pause/resume/cancel, live 0–100 % progress with
+**Features:** URL inline buttons are carried over (read from the public preview, or from the update for live posts) · Persian button UI (pick source/destination, options, start, pause/resume/cancel, live 0–100 % progress with
 speed and ETA) · server-side `copyMessages` (nothing is downloaded or uploaded) · original order and albums preserved ·
 automatic resume after restarts and automatic flood-wait handling · live mirroring of new source posts once the history
 is done · CSV export of the old→new message id map · any number of independent jobs · admin-only access.
@@ -99,7 +102,7 @@ then use *New transfer* in the bot. A systemd unit is in `deploy/`.
   minute; very large channels take hours. The bot waits on `retry_after` by itself and resumes after restarts.
 - Posts get the copy time as their date. Sending is silent by default; keep the destination private until the job is done.
 - The source must not have *Restrict saving content* enabled. Service messages and types Telegram refuses to copy are
-  reported as skipped. Links inside post texts are not rewritten — use the CSV export.
+  reported as skipped. Links inside post texts are not rewritten — use the CSV export. Telegram strips inline buttons when copying, so the bot re-attaches *URL* buttons it reads from the channel's public preview (public sources only; callback buttons only work inside their own bot and are reported, not copied).
 - The Bot API cannot read channel history, so ids are walked in order with `copyMessages`; for public channels the
   `t.me/s/<username>` preview supplies the newest id and exact old→new pairs, for private ones the scan runs a
   configurable number of ids past the newest post found (or forward the last post to the bot).

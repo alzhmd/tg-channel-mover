@@ -121,7 +121,7 @@ def job_text(job, stats: dict | None = None, now: float | None = None) -> str:
     if status != "scanning":
         lines.append(f"✅ کپی‌شده: <b>{fa(job['copied'])}</b> پست")
         if job["skipped"]:
-            lines.append(f"⏭ ردشده (پاک‌شده/غیرقابل‌کپی): {fa(job['skipped'])}")
+            lines.append(f"⏭ ردشده: {fa(job['skipped'])} شناسه بدون پستِ قابل‌کپی (پاک‌شده، پیام سرویس، …)")
         if job["failed"]:
             lines.append(f"⚠️ ناموفق: <b>{fa(job['failed'])}</b>")
     per_min = stats.get("per_min")
@@ -134,9 +134,11 @@ def job_text(job, stats: dict | None = None, now: float | None = None) -> str:
         lines.append(f"🐢 تلگرام سرعت را محدود کرده؛ ادامه تا {fa(int(stats['flood_until'] - time.monotonic()))} ثانیه‌ی دیگر")
     if job["mirror"]:
         lines.append("🔄 همگام‌سازی زنده: روشن" + (f" · {fa(job['live'])} پست جدید منتقل شد" if job["live"] else ""))
-    seen = json.loads(job["opts"] or "{}").get("buttons_seen")
-    if seen:
-        lines.append(f"ℹ️ {fa(seen)} پست دکمه‌ی شیشه‌ای دارند؛ تلگرام دکمه‌ها را کپی نمی‌کند (متن و رسانه کپی می‌شود).")
+    extra = json.loads(job["opts"] or "{}")
+    if extra.get("buttons_seen"):
+        lines.append(f"🔘 دکمه‌های شیشه‌ایِ {fa(extra['buttons_seen'])} پست همراه خودِ پست منتقل می‌شود.")
+    if extra.get("buttons_dropped"):
+        lines.append(f"ℹ️ {fa(extra['buttons_dropped'])} دکمه از نوع «کالبک/ربات» است و بیرون از ربات اصلی کار نمی‌کند؛ منتقل نمی‌شود.")
     if status == "error" and job["error"]:
         lines.append(f"\n❌ <code>{esc(job['error'][:200])}</code>\n{explain_error(job['error'])}")
     return "\n".join(lines)
@@ -155,6 +157,8 @@ def job_keyboard(job, active: bool) -> Kb:
     if s in ("done", "cancelled", "error", "paused", "running") and (job["copied"] or job["live"]):
         extra.append(Btn("📤 خروجی قدیم←جدید", callback_data=f"j:{j}:export"))
     rows.append(extra)
+    if job["skipped"]:
+        rows.append([Btn(f"⏭ ردشده‌ها چیست؟ ({fa(job['skipped'])})", callback_data=f"j:{j}:skipped")])
     if job["failed"] and s in ("done", "cancelled", "error"):
         rows.append([Btn(f"🔁 تلاش دوباره ({fa(job['failed'])} ناموفق)", callback_data=f"j:{j}:retry"),
                      Btn("📄 فهرست ناموفق‌ها", callback_data=f"j:{j}:fails")])
