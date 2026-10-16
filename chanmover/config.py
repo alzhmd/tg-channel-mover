@@ -31,6 +31,11 @@ class Config:
     batch_delay: float   # pause between two calls, seconds
     lookahead: int       # private sources: stop after this many empty ids past the last post found
     scrape_delay: float  # pause between two t.me/s pages, seconds
+    api_id: int          # Telegram app credentials, only for the Premium-account engine (my.telegram.org)
+    api_hash: str
+    user_session: str    # Telethon session file of the connected Premium account
+    emoji_file: str      # ordinary -> Premium emoji map (empty: the bundled one)
+    user_batch: int      # posts per window with the Premium-account engine
 
     @classmethod
     def load(cls) -> "Config":
@@ -47,4 +52,9 @@ class Config:
             batch_delay=float(os.environ.get("BATCH_DELAY", "1.0")),
             lookahead=int(os.environ.get("LOOKAHEAD", "600")),
             scrape_delay=float(os.environ.get("SCRAPE_DELAY", "0.35")),
+            api_id=int(os.environ.get("TG_API_ID") or 0),
+            api_hash=os.environ.get("TG_API_HASH", "").strip(),
+            user_session=os.environ.get("USER_SESSION", "data/user"),
+            emoji_file=os.environ.get("PREMIUM_EMOJI_FILE", "").strip(),
+            user_batch=max(1, min(100, int(os.environ.get("USER_BATCH_SIZE", "40")))),
         )

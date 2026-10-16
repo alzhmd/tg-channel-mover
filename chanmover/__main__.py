@@ -21,9 +21,18 @@ def main() -> None:
     async def post_init(app: Application) -> None:
         db = await Database.open(cfg.db_path)
         notifier = UiNotifier(app)
-        engine = Engine(app.bot, db, cfg, notifier)
+        user = None
+        if cfg.api_id and cfg.api_hash:
+            try:  # the Premium-account engine is optional and needs telethon + qrcode
+                from .emoji import EmojiMap
+                from .userengine import UserBackend
+                user = UserBackend(cfg.api_id, cfg.api_hash, cfg.user_session, EmojiMap.load(cfg.emoji_file or None))
+                await user.connect()
+            except ImportError:
+                logging.getLogger("chanmover").warning("telethon is not installed: Premium-account engine disabled")
+        engine = Engine(app.bot, db, cfg, notifier, user=user)
         notifier.engine = engine
-        app.bot_data.update(db=db, engine=engine, cfg=cfg)
+        app.bot_data.update(db=db, engine=engine, cfg=cfg, user=user)
         await app.bot.set_my_commands(COMMANDS)
         await engine.resume_all()
         me = await app.bot.get_me()
@@ -34,6 +43,8 @@ def main() -> None:
         await app.bot_data["engine"].shutdown()
 
     async def post_shutdown(app: Application) -> None:
+        if app.bot_data.get("user"):
+            await app.bot_data["user"].disconnect()
         await app.bot_data["db"].close()
 
     app = (Application.builder().token(cfg.token)

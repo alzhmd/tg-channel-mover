@@ -22,6 +22,29 @@
 - کپی چند کانال، به هر تعداد و هر زمان؛ هر انتقال یک کار مستقل است
 - فقط مدیرهای مجاز می‌توانند از ربات استفاده کنند
 
+### دو موتور، یک ربات
+
+| | 🤖 موتور ربات | 🌟 موتور اکانت پریمیوم |
+|---|---|---|
+| چطور کار می‌کند | Bot API (`copyMessages`) | اکانت پریمیومِ شما (MTProto) با اتصال QR |
+| ایموجی پریمیوم | **از بین می‌رود** (تلگرام به ربات‌ها در کانال اجازه نمی‌دهد) | حفظ می‌شود + ایموجی‌های معمولی **خودکار پریمیوم** می‌شوند |
+| سرعت | حدود ۶۰ پست در دقیقه | چند برابر سریع‌تر (فوروارد بدون نام ۱۰۰تایی) |
+| لازم دارد | ربات ادمین مبدا و مقصد | اکانت پریمیوم: عضو مبدا، ادمین مقصد؛ `TG_API_ID`/`TG_API_HASH` |
+| نگاشت قدیم←جدید | گاهی فقط بازه‌ای | همیشه دقیق |
+
+> **چرا ربات نمی‌تواند؟** طبق تغییرات رسمی Bot API (نسخه ۹٫۴) ربات‌هایی که مالکشان پریمیوم است فقط در چت خصوصی، گروه و سوپرگروه
+> می‌توانند ایموجی پریمیوم بفرستند، **کانال** شامل نیست. تست واقعی هم همین را نشان داد: حتی با توکنِ ساخته‌شده توسط اکانت پریمیوم،
+> ارسال و کپی ربات در کانال ایموجی ویژه را حذف می‌کند. فقط یک **کاربر پریمیوم** می‌تواند آن را در کانال بگذارد.
+
+ربات هوشمند است: «🌟 اکانت پریمیوم» را از منوی اصلی وصل کنید (QR یا لینک؛ اگر حساب رمز دومرحله‌ای دارد، رمز را می‌فرستید و پیامش فوراً پاک
+می‌شود). اگر اکانت Premium باشد، موتور به‌طور پیش‌فرض روی «اکانت پریمیوم» می‌ماند؛ در غیر این صورت ربات هشدار می‌دهد که ایموجی‌های ویژه ساده
+می‌شوند. دکمه‌ی «🔎 بررسی ایموجی ربات» هم با یک پیام آزمایشی در همان چت می‌گوید مالکِ توکن Premium است یا نه.
+
+نکته‌های موتور پریمیوم: ایموجی‌های بدون «همتای پریمیوم» (مثل 🎥) تا وقتی «جایگزین نزدیک» روشن نباشد ساده می‌مانند؛ نگاشت ایموجی‌ها
+در `chanmover/data/premium_emoji.json` است (`{"ids": {"😀": "<custom emoji id>"}, "aliases": {...}}`) و با `PREMIUM_EMOJI_FILE` عوض می‌شود.
+پست‌های دکمه‌دار با کمک ربات منتقل می‌شوند (کاربر نمی‌تواند دکمه‌ی شیشه‌ای بفرستد)، پس ایموجی ویژه‌شان ساده می‌ماند؛ برای همگام‌سازی زنده
+و دکمه‌ها ربات باید در مبدا هم ادمین باشد. گزینه‌ی «محافظت از محتوا» فقط در موتور ربات است.
+
 ### نصب
 
 ```bash
@@ -67,6 +90,10 @@ cp .env.example .env && chmod 600 .env     # BOT_TOKEN و ADMIN_IDS را پر ک
 | `ADMIN_IDS` | — | شناسه‌های عددی مدیران، با کاما |
 | `CLAIM_CODE` | خالی | اگر پر باشد، هر کس `/start <کد>` بفرستد مدیر می‌شود |
 | `DB_PATH` | `data/chanmover.db` | مسیر SQLite |
+| `TG_API_ID` / `TG_API_HASH` | — | اطلاعات برنامه از my.telegram.org؛ فقط برای موتور اکانت پریمیوم |
+| `USER_SESSION` | `data/user` | فایل نشست اکانت وصل‌شده |
+| `PREMIUM_EMOJI_FILE` | خالی | نگاشت ایموجی معمولی←پریمیوم (خالی: نسخه‌ی همراه) |
+| `USER_BATCH_SIZE` | `40` | تعداد پست در هر پنجره‌ی موتور پریمیوم |
 | `BATCH_SIZE` | `20` | تعداد پست در هر درخواست (حداکثر ۱۰۰)؛ بعد از flood wait خودکار کم می‌شود |
 | `BATCH_DELAY` | `1.0` | مکث بین درخواست‌ها (ثانیه) |
 | `LOOKAHEAD` | `600` | کانال خصوصی: چند شناسه‌ی خالی بعد از آخرین پست دیده شود |
@@ -91,6 +118,13 @@ repeating that as often as needed.
 speed and ETA) · server-side `copyMessages` (nothing is downloaded or uploaded) · original order and albums preserved ·
 automatic resume after restarts and automatic flood-wait handling · live mirroring of new source posts once the history
 is done · CSV export of the old→new message id map · any number of independent jobs · admin-only access.
+
+**Two engines.** *Bot engine*: Bot API `copyMessages` — Telegram strips Premium emoji from anything a bot sends or copies into a
+channel (Bot API 9.4 only allows them in private chats and groups; verified with a Premium-owned bot). *Premium-account engine*: the
+copying is done by your Premium Telegram account (linked with a QR code, like Telegram Desktop) — Premium emoji are kept, ordinary
+emoji are upgraded to Premium emoji automatically (map in `chanmover/data/premium_emoji.json`), sender is hidden, albums/media are
+reused by reference, posts needing no change are forwarded server-side without the author (100 per call), and the old→new id map is
+always exact. Set `TG_API_ID`/`TG_API_HASH` to enable it; the bot picks it by default when the linked account is Premium.
 
 **Setup:** `pip install -r requirements.txt`, copy `.env.example` to `.env` (set `BOT_TOKEN`, `ADMIN_IDS`), run
 `python -m chanmover`, add the bot as an admin of both channels (source: any rights, destination: *Post messages*),

@@ -12,7 +12,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS admins(user_id INTEGER PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS chats(
     id INTEGER PRIMARY KEY, title TEXT, username TEXT, type TEXT,
-    can_post INTEGER DEFAULT 0, is_member INTEGER DEFAULT 1, updated_at REAL);
+    can_post INTEGER DEFAULT 0, is_member INTEGER DEFAULT 1, updated_at REAL, via TEXT DEFAULT 'bot');
 CREATE TABLE IF NOT EXISTS jobs(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     src INTEGER, dst INTEGER, src_title TEXT, dst_title TEXT, src_username TEXT,
@@ -50,7 +50,7 @@ class Database:
         conn.row_factory = aiosqlite.Row
         await conn.execute("PRAGMA journal_mode=WAL")
         await conn.executescript(SCHEMA)
-        for table, column in (("jobs", "kbs TEXT"), ("live_queue", "markup TEXT")):  # databases from older versions
+        for table, column in (("jobs", "kbs TEXT"), ("live_queue", "markup TEXT"), ("chats", "via TEXT DEFAULT 'bot'")):  # databases from older versions
             have = {r["name"] for r in await (await conn.execute(f"PRAGMA table_info({table})")).fetchall()}
             if column.split()[0] not in have:
                 await conn.execute(f"ALTER TABLE {table} ADD COLUMN {column}")
@@ -81,12 +81,13 @@ class Database:
 
     # chats --------------------------------------------------------------------------------------------------
     async def upsert_chat(self, chat_id: int, title: str, username: str | None, kind: str, can_post: bool,
-                          is_member: bool = True) -> None:
+                          is_member: bool = True, via: str = "bot") -> None:
+        """`via` says who can see the chat: the bot, or only the connected Premium account."""
         await self.c.execute(
-            "INSERT INTO chats(id,title,username,type,can_post,is_member,updated_at) VALUES(?,?,?,?,?,?,?) "
+            "INSERT INTO chats(id,title,username,type,can_post,is_member,updated_at,via) VALUES(?,?,?,?,?,?,?,?) "
             "ON CONFLICT(id) DO UPDATE SET title=excluded.title, username=excluded.username, type=excluded.type, "
-            "can_post=excluded.can_post, is_member=excluded.is_member, updated_at=excluded.updated_at",
-            (chat_id, title, username, kind, int(can_post), int(is_member), time.time()))
+            "can_post=excluded.can_post, is_member=excluded.is_member, updated_at=excluded.updated_at, via=excluded.via",
+            (chat_id, title, username, kind, int(can_post), int(is_member), time.time(), via))
         await self.c.commit()
 
     async def get_chat(self, chat_id: int) -> aiosqlite.Row | None:
@@ -162,11 +163,34 @@ class Database:
         return await self._one("SELECT 1 FROM windows WHERE job_id=? AND first_src<=? AND last_src>=?",
                                (job_id, src_id, src_id)) is not None
 
+    async def mapped(self, job_id: int, ids: list[int]) -> set[int]:
+        """Which of `ids` already have a copy recorded (a window interrupted half way is not sent twice)."""
+        if not ids:
+            return set()
+        marks = ",".join("?" * len(ids))
+        rows = await self._all(f"SELECT src_id FROM msgmap WHERE job_id=? AND src_id IN ({marks}) AND dst_id IS NOT NULL",
+                               (job_id, *ids))
+        return {r["src_id"] for r in rows}
+
     async def id_map(self, job_id: int) -> list[aiosqlite.Row]:
         return await self._all("SELECT src_id,dst_id FROM msgmap WHERE job_id=? ORDER BY src_id", (job_id,))
 
     async def failures(self, job_id: int) -> list[aiosqlite.Row]:
         return await self._all("SELECT src_id,reason FROM failures WHERE job_id=? ORDER BY src_id", (job_id,))
+
+    async def copied_dst_ids(self, job_id: int) -> list[int]:
+        """Every message this job created in the destination (paired ones and the unpaired windows)."""
+        ids = {r["dst_id"] for r in await self._all("SELECT dst_id FROM msgmap WHERE job_id=? AND dst_id IS NOT NULL", (job_id,))}
+        for r in await self._all("SELECT dst_ids FROM windows WHERE job_id=?", (job_id,)):
+            ids.update(json.loads(r["dst_ids"]))
+        return sorted(ids)
+
+    async def forget_job_copies(self, job_id: int) -> None:
+        for table in ("msgmap", "windows", "failures", "live_queue"):
+            await self.c.execute(f"DELETE FROM {table} WHERE job_id=?", (job_id,))
+        await self.c.execute("UPDATE jobs SET copied=0, skipped=0, failed=0, live=0, pos=0, ids=NULL, mirror=0, "
+                             "status='cancelled', error=NULL WHERE id=?", (job_id,))
+        await self.c.commit()
 
     async def clear_failures(self, job_id: int, ids: list[int]) -> None:
         await self.c.executemany("DELETE FROM failures WHERE job_id=? AND src_id=?", [(job_id, i) for i in ids])
