@@ -1,0 +1,16 @@
+[Unit]
+Description=Channel Mover — Telegram channel migration bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/channel-mover
+ExecStart=/opt/channel-mover/venv/bin/python -m chanmover
+Restart=always
+RestartSec=5
+# Keep the SQLite DB and .env readable by this service only
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

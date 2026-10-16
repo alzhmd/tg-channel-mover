@@ -1,0 +1,48 @@
+"""Entry point: python -m chanmover"""
+from __future__ import annotations
+
+import logging
+
+from telegram import LinkPreviewOptions
+from telegram.constants import ParseMode
+from telegram.ext import Application, Defaults
+
+from .config import Config
+from .db import Database
+from .engine import Engine
+from .handlers import COMMANDS, UiNotifier, register
+
+
+def main() -> None:
+    logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    cfg = Config.load()
+
+    async def post_init(app: Application) -> None:
+        db = await Database.open(cfg.db_path)
+        notifier = UiNotifier(app)
+        engine = Engine(app.bot, db, cfg, notifier)
+        notifier.engine = engine
+        app.bot_data.update(db=db, engine=engine, cfg=cfg)
+        await app.bot.set_my_commands(COMMANDS)
+        await engine.resume_all()
+        me = await app.bot.get_me()
+        logging.getLogger("chanmover").info("started as @%s", me.username)
+
+    async def post_stop(app: Application) -> None:
+        # PTB closes the bot's HTTP client right after this hook, so the window in flight has to finish here
+        await app.bot_data["engine"].shutdown()
+
+    async def post_shutdown(app: Application) -> None:
+        await app.bot_data["db"].close()
+
+    app = (Application.builder().token(cfg.token)
+           .connect_timeout(15).read_timeout(30).write_timeout(30).pool_timeout(15)
+           .defaults(Defaults(parse_mode=ParseMode.HTML, link_preview_options=LinkPreviewOptions(is_disabled=True)))
+           .post_init(post_init).post_stop(post_stop).post_shutdown(post_shutdown).build())
+    register(app)
+    app.run_polling(allowed_updates=["message", "callback_query", "my_chat_member", "channel_post"])
+
+
+if __name__ == "__main__":
+    main()
