@@ -42,7 +42,7 @@
 
 نکته‌های موتور پریمیوم: ایموجی‌های بدون «همتای پریمیوم» (مثل 🎥) تا وقتی «جایگزین نزدیک» روشن نباشد ساده می‌مانند؛ نگاشت ایموجی‌ها
 در `chanmover/data/premium_emoji.json` است (`{"ids": {"😀": "<custom emoji id>"}, "aliases": {...}}`) و با `PREMIUM_EMOJI_FILE` عوض می‌شود.
-**سرعت ایمن:** اکانت شما حدود یک پست در هر ۰٫۸ ثانیه می‌نویسد و با هر `FLOOD_WAIT` تلگرام خودکار کندتر می‌شود؛ انتظارها دقیقاً رعایت می‌شوند (حتی بعد از ری‌استارت) و انتظار بلند به خودِ شما اطلاع داده می‌شود. تلگرام سقف‌ها را منتشر نمی‌کند و بالا زدن سرعت فقط انتظارها را بلندتر می‌کند؛ کانال‌های بزرگ چند ساعت طول می‌کشد.
+**سرعت ایمن:** اکانت شما حدود یک پست در هر ۰٫۸ ثانیه می‌نویسد و با هر `FLOOD_WAIT` تلگرام خودکار کندتر می‌شود؛ انتظارها دقیقاً رعایت می‌شوند (حتی بعد از ری‌استارت) و انتظار بلند به خودِ شما اطلاع داده می‌شود. تلگرام سقف‌ها را منتشر نمی‌کند و بالا زدن سرعت فقط انتظارها را بلندتر می‌کند. برای ارسال رسانه یک سهمیه‌ی ساعتی هم دارد: در یک انتقال واقعی ۱۴ هزار پستی هر یکی دو ساعت یک انتظار حدود ۲۵ دقیقه‌ای آمد که ربات رعایت کرد (کل کار حدود ۵ ساعت).
 پست‌های دکمه‌دار با کمک ربات منتقل می‌شوند (کاربر نمی‌تواند دکمه‌ی شیشه‌ای بفرستد)، پس ایموجی ویژه‌شان ساده می‌ماند؛ برای همگام‌سازی زنده
 و دکمه‌ها ربات باید در مبدا هم ادمین باشد. گزینه‌ی «محافظت از محتوا» فقط در موتور ربات است.
 
@@ -128,7 +128,7 @@ emoji are upgraded to Premium emoji automatically (map in `chanmover/data/premiu
 reused by reference, posts needing no change are forwarded server-side without the author (100 per call), and the old→new id map is
 always exact. Set `TG_API_ID`/`TG_API_HASH` to enable it; the bot picks it by default when the linked account is Premium.
 
-**Pace.** The account writes about one post per 0.8 s (`USER_MIN_INTERVAL`), slows down further after every `FLOOD_WAIT`, waits out each one exactly (also across restarts) and tells you about long ones. Telegram publishes no limits and pushing harder only lengthens the waits, so a big channel takes hours.
+**Pace.** The account writes about one post per 0.8 s (`USER_MIN_INTERVAL`), slows down further after every `FLOOD_WAIT`, waits out each one exactly (also across restarts) and tells you about long ones. Telegram publishes no limits and pushing harder only lengthens the waits, so a big channel takes hours. Media sends also seem to have an hourly quota: a real 14,000-post run met a ~25-minute wait every hour or two (about 5 h in total), all honoured.
 
 **Setup:** `pip install -r requirements.txt`, copy `.env.example` to `.env` (set `BOT_TOKEN`, `ADMIN_IDS`), run
 `python -m chanmover`, add the bot as an admin of both channels (source: any rights, destination: *Post messages*),
