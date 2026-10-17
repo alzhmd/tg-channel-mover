@@ -70,7 +70,7 @@ async def test_pacer_spaces_writes_and_backs_off_after_a_flood():
     p.flooded(1400)
     assert p.factor == 8.0  # x4 after a long wait, capped at 8
     p.after(1)
-    assert 7.5 < p.factor < 8.0  # eases back slowly
+    assert 7.9 < p.factor < 8.0  # eases back slowly
 
 
 async def test_a_restart_waits_out_a_known_flood():
@@ -81,3 +81,14 @@ async def test_a_restart_waits_out_a_known_flood():
     t = time.monotonic()
     await p.before()
     assert time.monotonic() - t >= 2.2
+
+
+def test_after_a_recent_flood_the_pace_starts_at_a_quarter_speed():
+    import time
+    from chanmover.userengine import Pacer
+    p = Pacer(1.0)
+    p.hold_until(time.time() - 600, margin=0)
+    assert p.factor == 4.0
+    fresh = Pacer(1.0)
+    fresh.hold_until(0, margin=0)
+    assert fresh.factor == 1.0

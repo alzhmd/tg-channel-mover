@@ -48,11 +48,15 @@ class Pacer:
 
     def after(self, posts: int) -> None:
         self.next_at = time.monotonic() + self.base * self.factor * max(posts, 1) * (1 + random.uniform(0, 0.3))
-        self.factor = max(1.0, self.factor * 0.97)
+        self.factor = max(1.0, self.factor * 0.995)  # eases back over a few hundred posts
 
     def hold_until(self, epoch: float, margin: float = 60.0) -> None:
-        """Stay quiet until a wall-clock time (a flood wait that was still running when the service restarted)."""
-        self.next_at = max(self.next_at, time.monotonic() + max(0.0, epoch - time.time()) + margin)
+        """Stay quiet until a wall-clock time (a flood wait that was still running when the service restarted).
+        A flood wait that ended within the last two hours also means the account is "hot": start at a quarter speed."""
+        now = time.time()
+        self.next_at = max(self.next_at, time.monotonic() + max(0.0, epoch - now) + margin)
+        if epoch and now - epoch < 7200:
+            self.factor = max(self.factor, 4.0)
 
     def flooded(self, seconds: float) -> None:
         self.factor = min(8.0, self.factor * (4 if seconds >= 300 else 2))
