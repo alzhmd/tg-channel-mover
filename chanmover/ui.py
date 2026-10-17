@@ -132,6 +132,10 @@ def job_text(job, stats: dict | None = None, now: float | None = None) -> str:
             lines.append(f"⏳ زمان باقی‌مانده: ≈ {duration(remaining / per_min * 60)}")
     if status == "running" and stats.get("flood_until", 0) > time.monotonic():
         lines.append(f"🐢 تلگرام سرعت را محدود کرده؛ ادامه تا {fa(int(stats['flood_until'] - time.monotonic()))} ثانیه‌ی دیگر")
+    rng = json.loads(job["opts"] or "{}")
+    if rng.get("from_id") or rng.get("to_id"):
+        lines.append(f"📍 بازه: از پست {fa(rng['from_id']) if rng.get('from_id') else 'اول'} تا "
+                     f"{fa(rng['to_id']) if rng.get('to_id') else 'آخر'}")
     if job["mirror"]:
         lines.append("🔄 همگام‌سازی زنده: روشن" + (f" · {fa(job['live'])} پست جدید منتقل شد" if job["live"] else ""))
     extra = json.loads(job["opts"] or "{}")

@@ -203,9 +203,6 @@ async def screen_opts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     d = draft(context)
     o = d["opts"]
     src, dst = await db.get_chat(d["src"]), await db.get_chat(d["dst"])
-    rng = "همه‌ی پست‌ها (۰ تا ۱۰۰٪)"
-    if o["from_id"] or o["to_id"]:
-        rng = f"از شناسه‌ی {fa(o['from_id'] or 1)} تا {fa(o['to_id']) if o['to_id'] else 'آخر'}"
     onoff = lambda v: "روشن ✅" if v else "خاموش"
     user = premium_ui.get_user(context)
     info = await user.whoami() if user else None
@@ -222,7 +219,8 @@ async def screen_opts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if info:
         rows.append([Btn("موتور: " + ("🌟 اکانت پریمیوم" if is_user else "🤖 ربات") + "  (تغییر)", callback_data="w:t:engine")])
     rows += [
-        [Btn(f"📅 محدوده: {rng}", callback_data="w:range")],
+        [Btn("📍 از پست: " + (fa(o["from_id"]) if o["from_id"] else "اولین پست"), callback_data="w:from"),
+         Btn("🏁 تا پست: " + (fa(o["to_id"]) if o["to_id"] else "آخرین پست"), callback_data="w:to")],
         [Btn(f"🔕 ارسال بی‌صدا: {onoff(o['silent'])}", callback_data="w:t:silent")],
         [Btn(f"🔄 همگام‌سازی پست‌های جدید: {onoff(o['mirror'])}", callback_data="w:t:mirror")],
     ]
@@ -258,7 +256,7 @@ async def on_wizard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         context.user_data["await"] = {"kind": "chat", "role": parts[2]}
         await show(update, "🔎 یوزرنیم (<code>@name</code>)، لینک عمومی (<code>t.me/name</code>) یا شناسه‌ی عددی کانال را بفرستید، "
                            "یا <b>یکی از پست‌های کانال را همین‌جا فوروارد کنید</b>.\n\n"
-                           "ℹ️ ربات باید قبلاً ادمین آن کانال شده باشد؛ لینک دعوت خصوصی را ربات نمی‌تواند باز کند.",
+                           "ℹ️ ربات (یا اکانت پریمیوم وصل‌شده) باید قبلاً عضو آن کانال باشد. لینک دعوت خصوصی هم پذیرفته می‌شود، به شرط وصل بودن اکانت پریمیوم.",
                    Kb([[Btn("✖️ انصراف", callback_data="m:home")]]))
     elif action == "t":
         key = parts[2]
@@ -267,12 +265,19 @@ async def on_wizard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         else:
             d["opts"][key] = not d["opts"][key]
         await screen_opts(update, context)
-    elif action == "range":
-        context.user_data["await"] = {"kind": "range"}
-        await show(update, "📅 شناسه‌ی پست شروع و پایان را بفرستید، مثل <code>100 2500</code>.\n"
-                           "فقط شروع: <code>100</code> · همه‌ی پست‌ها: <code>همه</code>\n"
-                           "(شناسه همان عدد آخر لینک پست است: t.me/name/<b>123</b>)",
-                   Kb([[Btn("↩️ برگشت", callback_data="w:back")]]))
+    elif action in ("from", "to"):
+        key = "from_id" if action == "from" else "to_id"
+        if len(parts) > 2 and parts[2] == "clear":
+            d["opts"][key] = None
+            await screen_opts(update, context)
+            return
+        context.user_data["await"] = {"kind": "post", "which": key}
+        what = "شروع" if action == "from" else "پایان"
+        await show(update, f"{'📍' if action == 'from' else '🏁'} پستِ <b>{what}</b> را مشخص کنید: لینک پست "
+                           "(مثل <code>t.me/Per3ianMoviezz/12345</code>)، یا شماره‌اش، یا خودِ پست را همین‌جا <b>فوروارد کنید</b>.\n"
+                           + ("پستِ شروع هم خودش کپی می‌شود." if action == "from" else "پستِ پایان هم خودش کپی می‌شود.")
+                           + "\nمثال‌ها: «از پست ۵۰۰۰ تا آخر» ← فقط «از» را بگذارید؛ «از ۵۰۰۰ تا ۶۰۰۰» ← هر دو را.",
+                   Kb([[Btn("🧹 برداشتن این محدودیت", callback_data=f"w:{action}:clear")], [Btn("↩️ برگشت", callback_data="w:back")]]))
     elif action == "hint":
         context.user_data["await"] = {"kind": "hint"}
         await show(update, "📍 آخرین پست کانال مبدا را همین‌جا <b>فوروارد کنید</b> یا شماره‌ی آن را بفرستید؛ "
@@ -375,9 +380,11 @@ async def start_job(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 # ---------------------------------------------------------------------------------------------------- text input
 def parse_ref(text: str):
+    """A channel reference: '@name', a numeric id, or ('invite', hash) for a private t.me/+... link."""
     text = text.strip()
-    if re.search(r"t\.me/(\+|joinchat/)", text):
-        return None
+    m = re.search(r"t\.me/(?:\+|joinchat/)([A-Za-z0-9_-]{8,})", text)
+    if m:
+        return ("invite", m.group(1))
     m = re.search(r"(?:t\.me/|@)([A-Za-z][A-Za-z0-9_]{3,31})", text)
     if m:
         return "@" + m.group(1)
@@ -386,8 +393,31 @@ def parse_ref(text: str):
     return None
 
 
+CLEAR_WORDS = {"همه", "آخر", "اول", "اولین", "آخرین", "تا آخر", "از اول", "all", "clear", "-"}
+
+
+def parse_post_id(text: str):
+    """A post given as a link (t.me/name/123, t.me/c/123/456), a plain number, or a word that clears the limit.
+    Returns the id, "clear", or None when it is not understood."""
+    t = (text or "").translate(_DIGITS).strip()
+    if t.lower() in CLEAR_WORDS:
+        return "clear"
+    m = re.search(r"t\.me/(?:c/\d+|[A-Za-z0-9_]+)/(\d+)", t)
+    if m:
+        return int(m.group(1))
+    if re.fullmatch(r"\d{1,12}", t):
+        return int(t)
+    return None
+
+
 async def register_chat(context: ContextTypes.DEFAULT_TYPE, ref) -> tuple[object | None, str | None]:
     db, _, _ = deps(context)
+    if isinstance(ref, tuple):  # private invite link: only the connected Premium account can open it, and only if it is already in
+        row = await register_via_user(context, ref)
+        if row:
+            return row, None
+        return None, ("برای لینک دعوت خصوصی، «🌟 اکانت پریمیوم» باید وصل باشد و همان اکانت از قبل عضو (یا ادمین) آن کانال باشد؛ "
+                      "من خودم جوین نمی‌شوم. یا ربات را ادمین کانال کنید.")
     try:
         chat = await context.bot.get_chat(ref)
     except TelegramError:
@@ -418,7 +448,14 @@ async def register_via_user(context: ContextTypes.DEFAULT_TYPE, ref):
     if not user or not await user.connect():
         return None
     try:
-        ent = await user.client.get_entity(ref)
+        if isinstance(ref, tuple):
+            from telethon.tl import functions, types
+            info = await user.client(functions.messages.CheckChatInviteRequest(hash=ref[1]))  # read-only: never joins
+            if not isinstance(info, types.ChatInviteAlready):
+                return None
+            ent = info.chat
+        else:
+            ent = await user.client.get_entity(ref)
         perms = await user.client.get_permissions(ent, "me")
     except Exception:
         return None
@@ -435,6 +472,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not await authorized(update, context):
         return
     msg = update.effective_message
+    db, _, _ = deps(context)
     if msg.text and premium_ui.waiting_for_password(context, msg.chat_id):
         await premium_ui.handle_password(update, context, msg.text)
         return
@@ -449,8 +487,8 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if aw["kind"] == "chat":
         ref = origin_chat.id if origin_chat else parse_ref(text)
         if ref is None:
-            await msg.reply_text("نفهمیدم. یوزرنیم کانال (<code>@name</code>) یا لینک عمومی‌اش را بفرستید، یا یک پست را فوروارد کنید.\n"
-                                 "لینک دعوت خصوصی (<code>t.me/+…</code>) را نمی‌توانم باز کنم؛ ربات را ادمین کانال کنید.")
+            await msg.reply_text("نفهمیدم. یوزرنیم کانال (<code>@name</code>)، لینک عمومی یا لینک دعوت خصوصی‌اش را بفرستید، یا یک پست را فوروارد کنید.\n"
+                                 "لینک دعوت خصوصی فقط وقتی باز می‌شود که «🌟 اکانت پریمیوم» وصل و عضو آن کانال باشد.")
             return
         row, err = await register_chat(context, ref)
         if err:
@@ -469,15 +507,34 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             await screen_pick(update, context, "dst")
         else:
             await screen_opts(update, context)
-    elif aw["kind"] == "range":
+    elif aw["kind"] == "post":
+        src = await db.get_chat(d["src"])
+        link_user = re.search(r"t\.me/([A-Za-z][A-Za-z0-9_]{3,31})/\d+", text)
+        if origin_chat and getattr(origin, "message_id", None):
+            if origin_chat.id != d["src"]:
+                await msg.reply_text("این پست از کانال مبدا نیست. پستی از همان کانالی که انتخاب کردید بفرستید.")
+                return
+            value = origin.message_id
+        else:
+            value = parse_post_id(text)
+            if link_user and src and src["username"] and link_user.group(1).lower() != src["username"].lower():
+                await msg.reply_text(f"این لینک مالِ کانال دیگری است؛ کانال مبدا @{src['username']} است.")
+                return
+        if value is None:
+            await msg.reply_text("نفهمیدم. لینک پست (t.me/نام/123)، شماره‌ی پست، یا یک پست فورواردشده بفرستید؛ برای برداشتن محدودیت «اولین» یا «آخرین» بنویسید.")
+            return
+        value = None if value == "clear" else value
+        key = aw["which"]
+        other = d["opts"]["to_id" if key == "from_id" else "from_id"]
+        if value and other and (value > other if key == "from_id" else value < other):
+            await msg.reply_text("پستِ شروع باید قبل از پستِ پایان باشد؛ شماره‌ها را بررسی کنید.")
+            return
+        d["opts"][key] = value
         context.user_data.pop("await", None)
-        nums = [int(x) for x in re.findall(r"\d+", text)]
-        d["opts"]["from_id"] = nums[0] if nums else None
-        d["opts"]["to_id"] = nums[1] if len(nums) > 1 else None
         await screen_opts(update, context)
     elif aw["kind"] == "hint":
-        num = getattr(origin, "message_id", None) or next((int(x) for x in re.findall(r"\d+", text)), None)
-        if not num:
+        num = getattr(origin, "message_id", None) or parse_post_id(text)
+        if not isinstance(num, int):
             await msg.reply_text("عدد یا یک پست فورواردشده بفرستید.")
             return
         context.user_data.pop("await", None)
