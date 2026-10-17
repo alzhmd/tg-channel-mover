@@ -393,3 +393,24 @@ async def test_user_engine_does_not_resend_what_a_crashed_window_already_sent(db
     assert sorted(sent) == list(range(4, 11)) and len(sent) == len(set(sent))  # 1-3 were sent by the crashed attempt
     row = await db.job(job)
     assert row["status"] == "done" and row["copied"] == 10 and row["error"] is None
+
+
+async def test_live_posts_get_their_links_pointed_at_the_new_channel(db, make):
+    from telethon.tl import types as tl
+    seen = {}
+
+    class LinkUser(FakeUser):
+        async def copy_window(self, src, dst, ids, hooks=None, link_rewrite=None, **kw):
+            from chanmover.userengine import Result
+            ents = [tl.MessageEntityTextUrl(offset=0, length=4, url="https://t.me/oldchan/7")]
+            seen["out"] = link_rewrite("film x", ents)
+            return Result(pairs=[(i, 5000 + i) for i in ids])
+
+    engine, rec, job = await make(FakeBot(existing=[]), {"backend": "user", "fix_links": True, "link_names": ["oldchan"]})
+    await db.c.executemany("INSERT INTO msgmap(job_id,src_id,dst_id) VALUES(?,?,?)", [(job, 7, 70)])
+    await db.update_job(job, status="done", top_id=50)
+    await db.queue_live(job, 90, None)
+    engine.user = LinkUser(ids=[])
+    await engine.drain_live(job, force=True)
+    text, ents, n = seen["out"]
+    assert n == 1 and ents[0].url == "https://t.me/c/200/70" and text == "film x"   # destination -200 -> t.me/c/200/...

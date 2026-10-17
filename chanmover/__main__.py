@@ -34,16 +34,28 @@ def main() -> None:
             except ImportError:
                 logging.getLogger("chanmover").warning("telethon is not installed: Premium-account engine disabled")
         engine = Engine(app.bot, db, cfg, notifier, user=user)
+        fixer = None
+        if user:
+            from .handlers import FixUi
+            from .linkfix import LinkFixer
+            fix_ui = FixUi(app)
+            fixer = LinkFixer(db, user, fix_ui)
+            fix_ui.fixer = fixer
+            engine.fixer = fixer
         notifier.engine = engine
-        app.bot_data.update(db=db, engine=engine, cfg=cfg, user=user)
+        app.bot_data.update(db=db, engine=engine, cfg=cfg, user=user, fixer=fixer)
         await app.bot.set_my_commands(COMMANDS)
         await engine.resume_all()
+        if fixer:
+            await fixer.resume_all()
         me = await app.bot.get_me()
         logging.getLogger("chanmover").info("started as @%s", me.username)
 
     async def post_stop(app: Application) -> None:
         # PTB closes the bot's HTTP client right after this hook, so the window in flight has to finish here
         await app.bot_data["engine"].shutdown()
+        if app.bot_data.get("fixer"):
+            await app.bot_data["fixer"].shutdown()
 
     async def post_shutdown(app: Application) -> None:
         if app.bot_data.get("user"):

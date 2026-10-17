@@ -202,6 +202,7 @@ class Notifier:
 class Engine:
     def __init__(self, bot: Bot, db: Database, cfg: Config, notifier: Notifier | None = None, user=None):
         self.bot, self.db, self.cfg, self.user = bot, db, cfg, user
+        self.fixer = None  # LinkFixer, set by the entry point when the Premium account is available
         self.notifier = notifier or Notifier()
         self.state: dict[int, RunState] = {}
         self._drain_locks: dict[int, asyncio.Lock] = {}
@@ -353,6 +354,9 @@ class Engine:
             await self.notifier.finished(job_id)
             if final == "done":
                 await self.drain_live(job_id, force=True)
+                if self.fixer and opts.get("backend") == "user" and opts.get("fix_links") and counters["copied"] > 0:
+                    fix_id = await self.fixer.create(await self.db.job(job_id), job["owner"])  # links -> the new channel
+                    await self.fixer.start(fix_id)
         except asyncio.CancelledError:
             raise
         except FatalError as e:
@@ -441,7 +445,7 @@ class Engine:
                                  top_id=ids[-1] if ids else 0, started_at=time.time(), opts=json.dumps(opts))
         return ListPlan(ids, 0, albums)
 
-    async def _copy_user(self, job: dict, opts: dict, ids: list[int], st: RunState) -> Batch:
+    async def _copy_user(self, job: dict, opts: dict, ids: list[int], st: RunState, live: bool = False) -> Batch:
         await st.running.wait()
         if st.cancel or st.stop:
             raise Stopped
@@ -471,11 +475,16 @@ class Engine:
                 except (FatalError, Stopped):
                     return None
                 return done.pairs[0][1] if done.pairs else None
+        link_rewrite = None
+        if live and opts.get("fix_links"):  # new posts: re-point their links at the new channel while copying
+            from .linkfix import build_rules
+            from .links import make_rewriter
+            link_rewrite = make_rewriter(*await build_rules(self.db, await self.db.job(job["id"]), opts.get("link_names", [])))
         try:
             res = await self.user.copy_window(
                 job["src"], job["dst"], ids, silent=bool(opts.get("silent", True)), protect=bool(opts.get("protect")),
                 no_caption=bool(opts.get("no_caption")), upgrade=bool(opts.get("upgrade", True)),
-                emoji=load_map(self.cfg.emoji_file or None, bool(opts.get("aliases"))), hooks=Hooks())
+                emoji=load_map(self.cfg.emoji_file or None, bool(opts.get("aliases"))), hooks=Hooks(), link_rewrite=link_rewrite)
         except BaseException as e:  # also a shutdown cancel: what was already sent must not be sent again
             partial = getattr(e, "partial", None)
             if partial and partial.pairs:  # keep what was sent before the error: a retry must not send it again
@@ -487,10 +496,10 @@ class Engine:
         return Batch(pairs=res.pairs, failed=res.failed, copied=len(res.pairs), skipped=res.skipped,
                      upgraded=res.upgraded, buttons_lost=res.buttons_lost)
 
-    async def _copy_ids(self, job: dict, opts: dict, ids: list[int], st: RunState) -> Batch:
+    async def _copy_ids(self, job: dict, opts: dict, ids: list[int], st: RunState, live: bool = False) -> Batch:
         """Copy a window. Posts with URL buttons go one by one with their buttons (Telegram's copy drops them)."""
         if opts.get("backend") == "user":
-            return await self._copy_user(job, opts, ids, st)
+            return await self._copy_user(job, opts, ids, st, live)
         if not st.kbs or not any(i in st.kbs for i in ids):
             return await self._copy_plain(job, opts, ids, st)
         batch, segment, first = Batch(), [], True
@@ -612,7 +621,7 @@ class Engine:
             st.running.set()
             for ids in groups:
                 try:
-                    batch = await self._copy_ids(job, opts, ids, st)
+                    batch = await self._copy_ids(job, opts, ids, st, live=True)
                 except Stopped:
                     return
                 except FatalError as e:

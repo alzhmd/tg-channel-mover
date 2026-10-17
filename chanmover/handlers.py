@@ -6,6 +6,7 @@ import io
 import json
 import logging
 import re
+import time
 
 from telegram import BotCommand, InlineKeyboardButton as Btn, InlineKeyboardMarkup as Kb, Update
 from telegram.constants import ChatMemberStatus as S, ChatType
@@ -15,12 +16,13 @@ from telegram.ext import (Application, CallbackQueryHandler, ChatMemberHandler, 
 
 from . import premium_ui, ui
 from .engine import Engine, Notifier
+from .linkfix import FixNotifier
 from .ui import esc, fa
 
 log = logging.getLogger("chanmover.bot")
 
 DEFAULT_OPTS = {"silent": True, "mirror": True, "protect": False, "no_caption": False,
-                "from_id": None, "to_id": None, "hint_top": None, "backend": "bot", "upgrade": True, "aliases": False}
+                "from_id": None, "to_id": None, "hint_top": None, "backend": "bot", "upgrade": True, "aliases": False, "fix_links": True}
 _DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
 MEMBER_STATES = (S.ADMINISTRATOR, S.MEMBER, S.OWNER)
 CHAT_TYPES = (ChatType.CHANNEL, ChatType.SUPERGROUP, ChatType.GROUP)
@@ -228,6 +230,7 @@ async def screen_opts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         rows.append([Btn(f"✨ ایموجی معمولی ← پریمیوم: {onoff(o['upgrade'])}", callback_data="w:t:upgrade")])
         if o["upgrade"]:
             rows.append([Btn(f"🔁 جایگزین نزدیک برای ایموجی بی‌معادل (🎥←📹): {onoff(o['aliases'])}", callback_data="w:t:aliases")])
+        rows.append([Btn(f"🔗 لینک‌های داخل پست‌ها ← همین کانال، بعد از پایان: {onoff(o['fix_links'])}", callback_data="w:t:fix_links")])
     else:
         rows.append([Btn(f"🔒 محافظت از محتوا در مقصد: {onoff(o['protect'])}", callback_data="w:t:protect")])
     rows.append([Btn(f"🚫 حذف کپشن‌ها: {onoff(o['no_caption'])}", callback_data="w:t:no_caption")])
@@ -484,6 +487,15 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     origin = getattr(msg, "forward_origin", None)
     origin_chat = getattr(origin, "chat", None)
     text = (msg.text or "").translate(_DIGITS).strip()
+    if aw["kind"] == "fixnames":
+        names = [n for n in re.findall(r"(?:t\.me/|@)?([A-Za-z][A-Za-z0-9_]{3,31})", text) if n.lower() not in ("https", "http")]
+        context.user_data.setdefault("fix_names", {}).setdefault(aw["job"], [])
+        for n in names:
+            if n not in context.user_data["fix_names"][aw["job"]]:
+                context.user_data["fix_names"][aw["job"]].append(n)
+        context.user_data.pop("await", None)
+        await msg.reply_text(f"✅ اضافه شد: {', '.join(names) or '—'}", reply_markup=Kb([[Btn("↩️ ادامه", callback_data=f"j:{aw['job']}:fix")]]))
+        return
     if aw["kind"] == "chat":
         ref = origin_chat.id if origin_chat else parse_ref(text)
         if ref is None:
@@ -604,6 +616,8 @@ async def on_job(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await q.message.reply_text("\n".join(lines))
     elif action == "skipped":
         await send_skipped(update, context, job)
+    elif action == "fix":
+        await screen_fix(update, context, job)
     elif action == "undo":
         if engine.is_active(job_id):
             await q.answer("اول انتقال را متوقف یا لغو کنید.", show_alert=True)
@@ -616,6 +630,119 @@ async def on_job(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await undo_job(update, context, job)
     elif action == "export":
         await send_export(update, context, job)
+
+
+async def screen_fix(update: Update, context: ContextTypes.DEFAULT_TYPE, job) -> None:
+    db, _, _ = deps(context)
+    names = context.user_data.get("fix_names", {}).get(job["id"], [])
+    earlier = await db.fixes_for(job["id"])
+    last = f"\n\nآخرین اصلاح: #{fa(earlier[0]['id'])} — {ui.FIX_STATUS.get(earlier[0]['status'], '')}" if earlier else ""
+    text = (f"🔗 <b>اصلاح لینک‌های داخلی</b> — انتقال #{fa(job['id'])}\n\n"
+            "پست‌های کپی‌شده هنوز لینک‌هایی مثل <code>t.me/کانال‌قدیمی/4098</code> دارند (نام فیلم‌های لینک‌دار). "
+            f"این کار هر لینکی را که به یک پستِ کانال قدیمی اشاره می‌کند پیدا می‌کند و به پستِ متناظرش در {ui.chat_label(job['dst_title'])} "
+            "وصل می‌کند؛ متن، فرمت و ایموجی‌ها دست نمی‌خورد و فقط پست‌هایی که لینک دارند ویرایش می‌شوند.\n\n"
+            "• اگر مقصد خصوصی باشد، لینک‌ها به شکل <code>t.me/c/…</code> می‌شوند و فقط اعضای کانال می‌توانند بازشان کنند.\n"
+            "• پست‌های ویرایش‌شده برچسب «ویرایش‌شده» می‌گیرند؛ این کار تلگرام است.\n"
+            "• لینک به پستی که کپی نشده (مثلاً پاک‌شده) همان‌طور می‌ماند.\n"
+            "• اگر کانال قدیمی قبلاً اسم دیگری داشته (مثلاً <code>ExampleChannel</code>)، آن را هم اضافه کنید."
+            + (f"\n\nنام‌های اضافه: {', '.join(names)}" if names else "") + last)
+    await show(update, text, Kb([[Btn("🧪 آزمایش روی ۳۰ پست آخر", callback_data=f"x:{job['id']}:trial")],
+                                 [Btn("✅ شروع اصلاح همه‌ی پست‌ها", callback_data=f"x:{job['id']}:new")],
+                                 [Btn("➕ نام قدیمی دیگر", callback_data=f"x:{job['id']}:names")],
+                                 [Btn("↩️ برگشت", callback_data=f"j:{job['id']}:view")]]))
+
+
+async def on_fix(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await authorized(update, context):
+        return
+    q = update.callback_query
+    await q.answer()
+    db, _, _ = deps(context)
+    fixer = context.application.bot_data.get("fixer")
+    _, num, action = q.data.split(":")
+    num = int(num)
+    if not fixer:
+        await show(update, "اصلاح لینک فقط با «🌟 اکانت پریمیوم» ممکن است.", ui.back_home())
+        return
+    if action == "names":
+        context.user_data["await"] = {"kind": "fixnames", "job": num}
+        await show(update, "نام‌های دیگرِ کانال قدیمی را بفرستید (هرکدام در یک خط یا با فاصله)، مثل <code>ExampleChannel</code> یا لینکش. "
+                           "این‌ها فقط برای تشخیص لینک‌های قدیمی هستند.", Kb([[Btn("↩️ برگشت", callback_data=f"j:{num}:fix")]]))
+        return
+    if action in ("new", "trial"):
+        job = await db.job(num)
+        if await db.src_to_dst(num) == {}:
+            await show(update, "این انتقال پستی ثبت نکرده که لینک‌ها را با آن اصلاح کنم.", ui.back_home())
+            return
+        names = context.user_data.get("fix_names", {}).get(num, [])
+        opts = json.loads(job["opts"] or "{}")
+        opts.update(fix_links=True, link_names=names)   # new posts of a live mirror get the same treatment
+        await db.update_job(num, opts=json.dumps(opts))
+        fix_id = await fixer.create(job, update.effective_user.id, names, last=30 if action == "trial" else None)
+        m = q.message
+        await db.update_fix(fix_id, status_chat=m.chat_id, status_msg=m.message_id)
+        await fixer.start(fix_id)
+        action, num = "view", fix_id
+    fix = await db.fix(num)
+    if not fix:
+        await q.answer("پیدا نشد", show_alert=True)
+        return
+    if action == "pause":
+        await fixer.pause(num)
+    elif action == "resume":
+        await fixer.resume(num)
+    elif action == "cancel":
+        await fixer.cancel(num)
+    if action == "view":
+        m = q.message
+        await db.update_fix(num, status_chat=m.chat_id, status_msg=m.message_id)
+    fix = await db.fix(num)
+    st = fixer.state.get(num)
+    left = (st.flood_until - time.monotonic()) if st else 0
+    await show(update, ui.fix_text(fix, left), ui.fix_keyboard(fix, fixer.is_active(num)))
+
+
+class FixUi(FixNotifier):
+    def __init__(self, app: Application):
+        self.app = app
+        self.fixer = None
+
+    async def progress(self, fix_id: int) -> None:
+        db = self.app.bot_data["db"]
+        fix = await db.fix(fix_id)
+        if not fix:
+            return
+        st = self.fixer.state.get(fix_id)
+        text = ui.fix_text(fix, (st.flood_until - time.monotonic()) if st else 0)
+        kb = ui.fix_keyboard(fix, self.fixer.is_active(fix_id))
+        try:
+            if fix["status_msg"]:
+                await self.app.bot.edit_message_text(text, chat_id=fix["status_chat"], message_id=fix["status_msg"], reply_markup=kb)
+            else:  # started automatically at the end of a transfer: open a status message for it
+                sent = await self.app.bot.send_message(fix["owner"], text, reply_markup=kb)
+                await db.update_fix(fix_id, status_chat=sent.chat_id, status_msg=sent.message_id)
+        except BadRequest as e:
+            if "not modified" not in str(e).lower():
+                log.debug("fix progress edit failed: %s", e)
+        except RetryAfter:
+            pass
+
+    async def finished(self, fix_id: int) -> None:
+        fix = await self.app.bot_data["db"].fix(fix_id)
+        if fix:
+            await self.app.bot.send_message(fix["owner"], f"✅ اصلاح لینک‌ها (#{fa(fix_id)}) تمام شد: {fa(fix['edited'])} پست ویرایش شد، "
+                                                          f"{fa(fix['links'])} لینک به همین کانال وصل شد.")
+
+    async def failed(self, fix_id: int, reason: str) -> None:
+        fix = await self.app.bot_data["db"].fix(fix_id)
+        if fix:
+            await self.app.bot.send_message(fix["owner"], f"❌ اصلاح لینک‌ها (#{fa(fix_id)}) متوقف شد:\n<code>{esc(reason[:200])}</code>\n"
+                                                          f"{ui.explain_error(reason)}")
+
+    async def notice(self, fix_id: int, text: str) -> None:
+        fix = await self.app.bot_data["db"].fix(fix_id)
+        if fix:
+            await self.app.bot.send_message(fix["owner"], f"⏳ اصلاح لینک‌ها #{fa(fix_id)}: {text}\nمحافظت معمولی تلگرام است؛ ربات صبر می‌کند و خودکار ادامه می‌دهد.")
 
 
 async def undo_job(update: Update, context: ContextTypes.DEFAULT_TYPE, job) -> None:
@@ -805,6 +932,7 @@ def register(app: Application) -> None:
     app.add_handler(CallbackQueryHandler(on_wizard, pattern=r"^w:"))
     app.add_handler(CallbackQueryHandler(on_job, pattern=r"^j:\d+:\w+$"))
     app.add_handler(CallbackQueryHandler(premium_ui.on_premium, pattern=r"^p:"))
+    app.add_handler(CallbackQueryHandler(on_fix, pattern=r"^x:\d+:\w+$"))
     app.add_handler(ChatMemberHandler(on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(MessageHandler(filters.UpdateType.CHANNEL_POST, on_channel_post))
     app.add_handler(MessageHandler(private & ~filters.COMMAND, on_message))

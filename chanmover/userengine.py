@@ -219,32 +219,35 @@ class UserBackend:
         by_random = {u.random_id: u.id for u in getattr(updates, "updates", []) if isinstance(u, types.UpdateMessageID)}
         return [by_random.get(r) for r in random_ids]
 
-    def _entities(self, text: str, entities, upgrade: bool, emoji: EmojiMap):
-        """(text, entities) for the copy: the post's own entities plus Premium emoji for the ordinary ones."""
+    def _entities(self, text: str, entities, upgrade: bool, emoji: EmojiMap, link_rewrite=None):
+        """(text, entities, changes) for the copy: links re-pointed (optional), the post's own entities plus Premium emoji."""
         own = list(entities or [])
+        links = 0
+        if link_rewrite and text:
+            text, own, links = link_rewrite(text, own)
         if not (upgrade and text):
-            return text, own, 0
+            return text, own, links
         spans = [(e.offset, e.length, _entity_kind(e)) for e in own]
         new_text, added = emoji.upgrade(text, spans)
         if not added:
-            return text, own, 0
+            return text, own, links
         own += [types.MessageEntityCustomEmoji(offset=o, length=n, document_id=int(cid)) for o, n, cid in added]
         own.sort(key=lambda e: e.offset)
-        return new_text, own, len(added)
+        return new_text, own, links + len(added)
 
     async def copy_window(self, src_id: int, dst_id: int, ids: list[int], *, silent: bool = True, protect: bool = False,
                           no_caption: bool = False, upgrade: bool = True, emoji: EmojiMap | None = None,
-                          hooks: Hooks | None = None) -> Result:
+                          hooks: Hooks | None = None, link_rewrite=None) -> Result:
         res = Result()
         try:
             return await self._copy_window(res, src_id, dst_id, ids, silent, protect, no_caption, upgrade,
-                                           emoji or self.emoji, hooks or Hooks())
+                                           emoji or self.emoji, hooks or Hooks(), link_rewrite)
         except BaseException as e:
             e.partial = res  # what was already sent before the error, so the engine can record it
             raise
 
     async def _copy_window(self, res: Result, src_id: int, dst_id: int, ids: list[int], silent: bool, protect: bool,
-                           no_caption: bool, upgrade: bool, emoji: EmojiMap, hooks: Hooks) -> Result:
+                           no_caption: bool, upgrade: bool, emoji: EmojiMap, hooks: Hooks, link_rewrite=None) -> Result:
         src, dst = await self.peer(src_id), await self.peer(dst_id)
         msgs = await self._call(hooks, lambda: self.client.get_messages(src, ids=ids))
         pending: list = []  # consecutive posts that can be forwarded as they are
@@ -278,7 +281,7 @@ class UserBackend:
             texts, ents, count = [], [], 0
             for m in group:
                 text = "" if (no_caption and m.media) else (m.raw_text or "")
-                t, e, n = self._entities(text, m.entities, upgrade, emoji)
+                t, e, n = self._entities(text, m.entities, upgrade, emoji, link_rewrite)
                 texts.append(t); ents.append(e); count += n
             first = group[0]
             await self.pacer.before()
@@ -327,10 +330,11 @@ class UserBackend:
                     group.append(order[i][1])
                     i += 1
             rewrite = False
-            if upgrade and not isinstance(m.media, FORWARD_ONLY):
+            if (upgrade or link_rewrite) and not isinstance(m.media, FORWARD_ONLY):
                 for g in group:
                     spans = [(e.offset, e.length, _entity_kind(e)) for e in (g.entities or [])]
-                    if g.raw_text and emoji.upgrade(g.raw_text, spans)[1]:
+                    if g.raw_text and ((upgrade and emoji.upgrade(g.raw_text, spans)[1])
+                                       or (link_rewrite and link_rewrite(g.raw_text, g.entities or [])[2])):
                         rewrite = True
                         break
             if rewrite:
