@@ -1,6 +1,7 @@
 """Telegram handlers: admin menu, new-transfer wizard, job control and the live-mirror hooks."""
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 import json
@@ -22,7 +23,7 @@ from .ui import esc, fa
 log = logging.getLogger("chanmover.bot")
 
 DEFAULT_OPTS = {"silent": True, "mirror": True, "protect": False, "no_caption": False,
-                "from_id": None, "to_id": None, "hint_top": None, "backend": "bot", "upgrade": True, "aliases": False, "fix_links": True}
+                "from_id": None, "to_id": None, "hint_top": None, "backend": "bot", "upgrade": True, "aliases": False, "fix_links": True, "link_names": []}
 _DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
 MEMBER_STATES = (S.ADMINISTRATOR, S.MEMBER, S.OWNER)
 CHAT_TYPES = (ChatType.CHANNEL, ChatType.SUPERGROUP, ChatType.GROUP)
@@ -231,6 +232,8 @@ async def screen_opts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if o["upgrade"]:
             rows.append([Btn(f"🔁 جایگزین نزدیک برای ایموجی بی‌معادل (🎥←📹): {onoff(o['aliases'])}", callback_data="w:t:aliases")])
         rows.append([Btn(f"🔗 لینک‌های داخل پست‌ها ← همین کانال (حین کپی): {onoff(o['fix_links'])}", callback_data="w:t:fix_links")])
+        if o["fix_links"]:
+            rows.append([Btn("🏷 نام‌های قدیمیِ کانال مبدا: " + (", ".join(o["link_names"]) or "ندارد"), callback_data="w:names")])
     else:
         rows.append([Btn(f"🔒 محافظت از محتوا در مقصد: {onoff(o['protect'])}", callback_data="w:t:protect")])
     rows.append([Btn(f"🚫 حذف کپشن‌ها: {onoff(o['no_caption'])}", callback_data="w:t:no_caption")])
@@ -281,6 +284,12 @@ async def on_wizard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                            + ("پستِ شروع هم خودش کپی می‌شود." if action == "from" else "پستِ پایان هم خودش کپی می‌شود.")
                            + "\nمثال‌ها: «از پست ۵۰۰۰ تا آخر» ← فقط «از» را بگذارید؛ «از ۵۰۰۰ تا ۶۰۰۰» ← هر دو را.",
                    Kb([[Btn("🧹 برداشتن این محدودیت", callback_data=f"w:{action}:clear")], [Btn("↩️ برگشت", callback_data="w:back")]]))
+    elif action == "names":
+        context.user_data["await"] = {"kind": "wnames"}
+        await show(update, "🏷 اگر کانال مبدا قبلاً یوزرنیم دیگری داشته و پست‌های قدیمی هنوز لینک‌هایی با آن دارند (مثلاً "
+                           "<code>t.me/ExampleChannel/4098</code>)، آن یوزرنیم‌ها را بفرستید (هرکدام در یک خط یا با فاصله). "
+                           "برای پاک کردن: «ندارد».",
+                   Kb([[Btn("↩️ برگشت", callback_data="w:back")]]))
     elif action == "hint":
         context.user_data["await"] = {"kind": "hint"}
         await show(update, "📍 آخرین پست کانال مبدا را همین‌جا <b>فوروارد کنید</b> یا شماره‌ی آن را بفرستید؛ "
@@ -487,6 +496,12 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     origin = getattr(msg, "forward_origin", None)
     origin_chat = getattr(origin, "chat", None)
     text = (msg.text or "").translate(_DIGITS).strip()
+    if aw["kind"] == "wnames":
+        names = [n for n in re.findall(r"(?:t\.me/|@)?([A-Za-z][A-Za-z0-9_]{3,31})", text) if n.lower() not in ("https", "http")]
+        d["opts"]["link_names"] = [] if text.strip() in ("ندارد", "-") else sorted(set(names), key=str.lower)
+        context.user_data.pop("await", None)
+        await screen_opts(update, context)
+        return
     if aw["kind"] == "fixnames":
         names = [n for n in re.findall(r"(?:t\.me/|@)?([A-Za-z][A-Za-z0-9_]{3,31})", text) if n.lower() not in ("https", "http")]
         context.user_data.setdefault("fix_names", {}).setdefault(aw["job"], [])
@@ -747,17 +762,37 @@ class FixUi(FixNotifier):
 
 
 async def undo_job(update: Update, context: ContextTypes.DEFAULT_TYPE, job) -> None:
-    """Deletes exactly the posts a job created in its destination, then forgets the job's copies."""
+    """Deletes exactly the posts a job created in its destination, then forgets the job's copies.
+
+    With the Premium account this can be thousands of posts, so it runs in the background and reports when done."""
     db, engine, _ = deps(context)
     ids = await db.copied_dst_ids(job["id"])
     opts = json.loads(job["opts"] or "{}")
+    user = premium_ui.get_user(context)
+    chat_id = update.effective_chat.id
+    if opts.get("backend") == "user" and user:
+        await show(update, f"🧹 در حال پاک کردن {fa(len(ids))} پست از {ui.chat_label(job['dst_title'])}… (تا چند دقیقه؛ پایانش را خبر می‌دهم)",
+                   Kb([[Btn("🏠 منوی اصلی", callback_data="m:home")]]))
+
+        async def work() -> None:
+            from .userengine import Hooks
+            try:
+                peer = await user.peer(job["dst"])
+                for i in range(0, len(ids), 100):
+                    await user._call(Hooks(), lambda chunk=ids[i:i + 100]: user.client.delete_messages(peer, chunk))
+                    await asyncio.sleep(0.5)
+            except Exception as e:  # noqa: BLE001
+                log.exception("undo failed")
+                await context.bot.send_message(chat_id, f"❌ پاک کردن کامل نشد: <code>{esc(str(e)[:150])}</code>\nدوباره «🧹» را بزنید؛ ادامه می‌دهد.")
+                return
+            await db.forget_job_copies(job["id"])
+            await context.bot.send_message(chat_id, f"🧹 {fa(len(ids))} پست از مقصد پاک شد و انتقال #{fa(job['id'])} بسته شد.",
+                                           reply_markup=Kb([[Btn("➕ انتقال جدید", callback_data="m:new")]]))
+        context.application.create_task(work())
+        return
     try:
-        user = premium_ui.get_user(context)
-        if opts.get("backend") == "user" and user:
-            await user.client.delete_messages(await user.peer(job["dst"]), ids)
-        else:
-            for i in range(0, len(ids), 100):
-                await context.bot.delete_messages(job["dst"], ids[i:i + 100])
+        for i in range(0, len(ids), 100):
+            await context.bot.delete_messages(job["dst"], ids[i:i + 100])
     except TelegramError as e:
         await show(update, f"❌ پاک نشد: <code>{esc(str(e)[:150])}</code>\nربات باید در مقصد دسترسی «حذف پیام» داشته باشد.",
                    Kb([[Btn("↩️ برگشت", callback_data=f"j:{job['id']}:view")]]))
