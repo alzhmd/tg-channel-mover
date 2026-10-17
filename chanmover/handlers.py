@@ -230,7 +230,7 @@ async def screen_opts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         rows.append([Btn(f"✨ ایموجی معمولی ← پریمیوم: {onoff(o['upgrade'])}", callback_data="w:t:upgrade")])
         if o["upgrade"]:
             rows.append([Btn(f"🔁 جایگزین نزدیک برای ایموجی بی‌معادل (🎥←📹): {onoff(o['aliases'])}", callback_data="w:t:aliases")])
-        rows.append([Btn(f"🔗 لینک‌های داخل پست‌ها ← همین کانال، بعد از پایان: {onoff(o['fix_links'])}", callback_data="w:t:fix_links")])
+        rows.append([Btn(f"🔗 لینک‌های داخل پست‌ها ← همین کانال (حین کپی): {onoff(o['fix_links'])}", callback_data="w:t:fix_links")])
     else:
         rows.append([Btn(f"🔒 محافظت از محتوا در مقصد: {onoff(o['protect'])}", callback_data="w:t:protect")])
     rows.append([Btn(f"🚫 حذف کپشن‌ها: {onoff(o['no_caption'])}", callback_data="w:t:no_caption")])
@@ -642,6 +642,7 @@ async def screen_fix(update: Update, context: ContextTypes.DEFAULT_TYPE, job) ->
             f"این کار هر لینکی را که به یک پستِ کانال قدیمی اشاره می‌کند پیدا می‌کند و به پستِ متناظرش در {ui.chat_label(job['dst_title'])} "
             "وصل می‌کند؛ متن، فرمت و ایموجی‌ها دست نمی‌خورد و فقط پست‌هایی که لینک دارند ویرایش می‌شوند.\n\n"
             "• اگر مقصد خصوصی باشد، لینک‌ها به شکل <code>t.me/c/…</code> می‌شوند و فقط اعضای کانال می‌توانند بازشان کنند.\n"
+            "• ⚠️ تلگرام فقط حدود ۴ تا ۵ ویرایش در دقیقه می‌دهد (برای هزاران پست ده‌ها ساعت)؛ برای کانال بزرگ بهتر است انتقال را با گزینه‌ی «لینک‌ها حین کپی» از اول انجام دهید. این بخش برای چند پست یا اصلاح‌های کوچک است.\n"
             "• پست‌های ویرایش‌شده برچسب «ویرایش‌شده» می‌گیرند؛ این کار تلگرام است.\n"
             "• لینک به پستی که کپی نشده (مثلاً پاک‌شده) همان‌طور می‌ماند.\n"
             "• اگر کانال قدیمی قبلاً اسم دیگری داشته (مثلاً <code>ExampleChannel</code>)، آن را هم اضافه کنید."

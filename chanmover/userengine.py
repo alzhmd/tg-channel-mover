@@ -170,13 +170,15 @@ class UserBackend:
     # reading --------------------------------------------------------------------------------------------------
     async def scan(self, src_id: int, lo: int = 1, hi: int | None = None,
                    progress: Callable[[int, int], Awaitable[None]] | None = None,
-                   on_flood: Callable[[float], Awaitable[None]] | None = None) -> tuple[list[int], dict[int, tuple[int, int]]]:
-        """Ids of every real post of the source (ascending) and the id span of each multi-post album.
+                   on_flood: Callable[[float], Awaitable[None]] | None = None) -> tuple[list[int], dict[int, tuple[int, int]], list[int]]:
+        """Ids of every copyable post of the source (ascending), the id span of each multi-post album, and the ids of posts
+        Telegram itself blocks for everyone (copyright etc.), which can never be copied.
 
         A flood wait in the middle of the history is waited out and the listing continues after the last id seen."""
         src = await self.peer(src_id)
         ids: list[int] = []
         groups: dict[int, list[int]] = {}
+        blocked: list[int] = []
         last = max(lo - 1, 0)
         while True:
             try:
@@ -184,6 +186,9 @@ class UserBackend:
                                                          wait_time=1.5):
                     last = m.id
                     if isinstance(m, (types.MessageService, types.MessageEmpty)):
+                        continue
+                    if getattr(m, "restriction_reason", None):
+                        blocked.append(m.id)
                         continue
                     ids.append(m.id)
                     if m.grouped_id:
@@ -194,7 +199,15 @@ class UserBackend:
             except errors.FloodWaitError as e:
                 log.warning("flood wait %ss while listing the source", e.seconds)
                 await (on_flood or Hooks().flood)(e.seconds)
-        return ids, {i: (g[0], g[-1]) for g in groups.values() if len(g) > 1 for i in g}
+        return ids, {i: (g[0], g[-1]) for g in groups.values() if len(g) > 1 for i in g}, blocked
+
+    async def probe_next_id(self, chat_id: int) -> int:
+        """The id the channel handed out last: send one throw-away post and delete it. Ids only ever grow, so the next real
+        post gets this id + 1 (that is what lets links to not-yet-copied posts be written correctly)."""
+        peer = await self.peer(chat_id)
+        sent = await self._call(Hooks(), lambda: self.client.send_message(peer, ".", silent=True))
+        await self._call(Hooks(), lambda: self.client.delete_messages(peer, sent.id))
+        return sent.id
 
     # copying --------------------------------------------------------------------------------------------------
     async def _call(self, hooks: Hooks, make: Callable[[], Awaitable]):

@@ -51,8 +51,8 @@ async def test_scan_waits_out_a_flood_and_continues_after_the_last_id():
 
     ub = UserBackend.__new__(UserBackend)
     ub.client, ub._peers, ub.emoji = Client(), {}, EmojiMap({})
-    ids, albums = await ub.scan(-100, 1, None, None, on_flood)
-    assert ids == list(range(1, 11)) and Client.calls == [0, 5] and waited == [3]
+    ids, albums, blocked = await ub.scan(-100, 1, None, None, on_flood)
+    assert blocked == [] and ids == list(range(1, 11)) and Client.calls == [0, 5] and waited == [3]
     assert albums == {8: (8, 9), 9: (8, 9)}
 
 

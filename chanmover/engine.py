@@ -189,6 +189,8 @@ class RunState:
     known: set[int] | None = None  # ids the web preview showed; lets old->new pairs stay exact around gaps
     kbs: dict[int, list] | None = None  # post id -> URL-button rows, copied one by one with their buttons
     trailing: int = 0  # empty ids seen since the last post; only counted as skipped once a later post shows up
+    predicted: dict[int, int] | None = None  # Premium engine: source id -> the id the copy will get in the destination
+    rules: tuple | None = None  # link rules (+ target) used while copying
 
 
 class Notifier:
@@ -300,7 +302,8 @@ class Engine:
                 await self.db.update_job(job_id, status="cancelled", finished_at=time.time())
                 await self.notifier.finished(job_id)
                 return
-            counters = {k: job[k] for k in ("copied", "skipped", "failed")}
+            fresh = await self.db.job(job_id)
+            counters = {k: fresh[k] for k in ("copied", "skipped", "failed")}
             if opts.get("backend") == "user":
                 st.bs = self.cfg.user_batch
             await self.db.update_job(job_id, status="running", error=None, started_at=job["started_at"] or time.time())
@@ -354,9 +357,7 @@ class Engine:
             await self.notifier.finished(job_id)
             if final == "done":
                 await self.drain_live(job_id, force=True)
-                if self.fixer and opts.get("backend") == "user" and opts.get("fix_links") and counters["copied"] > 0:
-                    fix_id = await self.fixer.create(await self.db.job(job_id), job["owner"])  # links -> the new channel
-                    await self.fixer.start(fix_id)
+
         except asyncio.CancelledError:
             raise
         except FatalError as e:
@@ -419,7 +420,10 @@ class Engine:
         """Plan for the Premium-account engine: the account reads the exact list of posts and where albums are."""
         if job["ids"] and job["mode"] == "list":
             albums = {int(k): tuple(v) for k, v in (opts.get("albums") or {}).items()}
-            return ListPlan(json.loads(job["ids"]), job["pos"], albums)
+            ids = json.loads(job["ids"])
+            if opts.get("fix_links") and opts.get("base"):
+                st.predicted = {sid: opts["base"] + 1 + k for k, sid in enumerate(ids)}
+            return ListPlan(ids, job["pos"], albums)
         if not self.user or not await self.user.connect():
             raise FatalError("اکانت پریمیوم به ربات متصل نیست (منوی اصلی ← 🌟 اکانت پریمیوم).")
         await self.db.update_job(job["id"], status="scanning")
@@ -435,13 +439,22 @@ class Engine:
                 st.flood_until = time.monotonic() + seconds
                 await self._tick(job["id"], st, force=True)
                 await asyncio.sleep(seconds + 1)
-            ids, albums = await self.user.scan(job["src"], int(opts.get("from_id") or 1), end, progress, on_flood)
+            scanned = await self.user.scan(job["src"], int(opts.get("from_id") or 1), end, progress, on_flood)
         except asyncio.CancelledError:
             if st.cancel:
                 return None
             raise
+        ids, albums = scanned[0], scanned[1]
+        blocked = list(scanned[2]) if len(scanned) > 2 else []
         opts["albums"] = {str(i): list(span) for i, span in albums.items()}
-        await self.db.update_job(job["id"], mode="list", ids=json.dumps(ids), total=len(ids), pos=0,
+        if blocked:
+            opts["blocked"] = blocked
+        if opts.get("fix_links") and ids:
+            # Links to posts that are not copied yet need their future ids: the destination hands out ids one after
+            # another, so the k-th post will get base + 1 + k. Each window is checked against this while copying.
+            opts["base"] = await self.user.probe_next_id(job["dst"])
+            st.predicted = {sid: opts["base"] + 1 + k for k, sid in enumerate(ids)}
+        await self.db.update_job(job["id"], mode="list", ids=json.dumps(ids), total=len(ids), pos=0, skipped=len(blocked),
                                  top_id=ids[-1] if ids else 0, started_at=time.time(), opts=json.dumps(opts))
         return ListPlan(ids, 0, albums)
 
@@ -476,10 +489,18 @@ class Engine:
                     return None
                 return done.pairs[0][1] if done.pairs else None
         link_rewrite = None
-        if live and opts.get("fix_links"):  # new posts: re-point their links at the new channel while copying
+        predicted = st.predicted if (st.predicted is not None and not live) else None
+        if opts.get("fix_links") and (live or predicted is not None):  # re-point links at the new channel while copying
             from .linkfix import build_rules
             from .links import make_rewriter
-            link_rewrite = make_rewriter(*await build_rules(self.db, await self.db.job(job["id"]), opts.get("link_names", [])))
+            if live or st.rules is None:
+                rules, target = await build_rules(self.db, await self.db.job(job["id"]), opts.get("link_names", []))
+                if predicted is not None:
+                    rules[0].mapping.update(predicted)   # forward links to posts that do not exist yet
+                    st.rules = (rules, target)
+            else:
+                rules, target = st.rules
+            link_rewrite = make_rewriter(rules, target)
         try:
             res = await self.user.copy_window(
                 job["src"], job["dst"], ids, silent=bool(opts.get("silent", True)), protect=bool(opts.get("protect")),
@@ -493,6 +514,15 @@ class Engine:
             if isinstance(e, USER_FATAL):
                 raise FatalError(f"{type(e).__name__}: {e}") from e
             raise
+        if predicted is not None:
+            wrong = [(s, d, predicted.get(s)) for s, d in res.pairs if predicted.get(s) != d]
+            if wrong or res.failed or res.skipped or len(res.pairs) != len(ids):
+                fresh = await self.db.job(job["id"])   # keep what was sent, then stop: later links would point to wrong posts
+                await self.db.record_batch(job["id"], res.pairs, res.failed, [], copied=fresh["copied"] + len(res.pairs))
+                raise FatalError(
+                    "شماره‌گذاری پیش‌بینی‌شده با پست‌های ساخته‌شده نمی‌خواند "
+                    f"(نمونه: پست {wrong[0][0]} در مقصد شماره‌ی {wrong[0][1]} گرفت، انتظار {wrong[0][2]}) "
+                    if wrong else f"{len(res.failed) + res.skipped} پست این پنجره کپی نشد؛ لینک‌های بعدی غلط می‌شد، پس توقف کردم.")
         return Batch(pairs=res.pairs, failed=res.failed, copied=len(res.pairs), skipped=res.skipped,
                      upgraded=res.upgraded, buttons_lost=res.buttons_lost)
 
