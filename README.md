@@ -22,6 +22,12 @@
 - کپی چند کانال، به هر تعداد و هر زمان؛ هر انتقال یک کار مستقل است
 - فقط مدیرهای مجاز می‌توانند از ربات استفاده کنند
 
+### بازه و لینک دعوت
+
+- در تنظیمات هر انتقال «📍 از پست» و «🏁 تا پست» هست: لینک پست (`t.me/نام/123`)، شماره‌اش یا خودِ پستِ فورواردشده را بدهید. فقط «از» = از آن پست تا آخر؛ فقط «تا» = از اول تا آن پست؛ هر دو = بین این دو (خود آن دو پست هم کپی می‌شوند).
+- مقصد یا مبدا می‌تواند لینک دعوت خصوصی (`t.me/+…`) باشد، به شرط اینکه «🌟 اکانت پریمیوم» وصل و از قبل عضو آن کانال باشد؛ ربات هرگز خودش جوین نمی‌شود.
+- می‌توانید یک کانال را از کپیِ قبلی‌اش هم کپی کنید (مثلاً «ارشیو ۲» از «ارشیو ۱»): فقط فوروارد بدون نام انجام می‌شود و ایموجی‌های پریمیوم از قبل داخل پست‌ها هستند.
+
 ### دو موتور، یک ربات
 
 | | 🤖 موتور ربات | 🌟 موتور اکانت پریمیوم |
@@ -120,6 +126,8 @@ repeating that as often as needed.
 speed and ETA) · server-side `copyMessages` (nothing is downloaded or uploaded) · original order and albums preserved ·
 automatic resume after restarts and automatic flood-wait handling · live mirroring of new source posts once the history
 is done · CSV export of the old→new message id map · any number of independent jobs · admin-only access.
+
+**Range & invite links.** *From post* / *To post* in the options take a post link, a number or a forwarded post (only *from* = to the end, only *to* = from the start, both = between, both ends included). A private invite link (`t.me/+…`) works as source or destination when the linked Premium account is already in that channel (it never joins by itself). A channel can also be copied from an earlier copy.
 
 **Two engines.** *Bot engine*: Bot API `copyMessages` — Telegram strips Premium emoji from anything a bot sends or copies into a
 channel (Bot API 9.4 only allows them in private chats and groups; verified with a Premium-owned bot). *Premium-account engine*: the

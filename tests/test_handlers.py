@@ -9,7 +9,8 @@ def test_parse_ref():
     assert parse_ref("https://t.me/my_channel") == "@my_channel"
     assert parse_ref("t.me/my_channel/123") == "@my_channel"
     assert parse_ref("-1001234567890") == -1001234567890
-    assert parse_ref("https://t.me/+AbCdEfGh123") is None  # private invite links cannot be opened by a bot
+    assert parse_ref("https://t.me/+AbCdEfGh123") == ("invite", "AbCdEfGh123")  # opened by the Premium account, never joined
+    assert parse_ref("t.me/joinchat/AbCdEfGh123_-") == ("invite", "AbCdEfGh123_-")
     assert parse_ref("hello") is None
 
 
@@ -93,3 +94,12 @@ async def test_undo_lists_every_post_the_job_created(db, make_job):
     await db.forget_job_copies(job["id"])
     row = await db.job(job["id"])
     assert await db.copied_dst_ids(job["id"]) == [] and row["status"] == "cancelled" and row["copied"] == 0 and not row["mirror"]
+
+
+def test_parse_post_id():
+    from chanmover.handlers import parse_post_id
+    assert parse_post_id("https://t.me/ExampleChannel/12345") == 12345   # the "3" in the channel name is not an id
+    assert parse_post_id("t.me/c/2121858214/987?single") == 987
+    assert parse_post_id("۵۰۰۰") == 5000 and parse_post_id(" 77 ") == 77
+    assert parse_post_id("آخرین") == "clear" and parse_post_id("همه") == "clear"
+    assert parse_post_id("hello") is None
