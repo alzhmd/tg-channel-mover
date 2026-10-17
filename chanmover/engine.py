@@ -426,7 +426,11 @@ class Engine:
             if st.cancel:
                 raise asyncio.CancelledError
         try:
-            ids, albums = await self.user.scan(job["src"], int(opts.get("from_id") or 1), end, progress)
+            async def on_flood(seconds: float) -> None:
+                st.flood_until = time.monotonic() + seconds
+                await self._tick(job["id"], st, force=True)
+                await asyncio.sleep(seconds + 1)
+            ids, albums = await self.user.scan(job["src"], int(opts.get("from_id") or 1), end, progress, on_flood)
         except asyncio.CancelledError:
             if st.cancel:
                 return None
