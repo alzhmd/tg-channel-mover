@@ -296,7 +296,10 @@ class FakeUser:
         return True
 
     async def scan(self, src, lo, hi, progress, on_flood=None):
-        return list(self.ids), dict(self.albums)
+        return list(self.ids), dict(self.albums), list(getattr(self, "blocked", []))
+
+    async def probe_next_id(self, chat_id):
+        return getattr(self, "base", 999)
 
     async def copy_window(self, src, dst, ids, hooks=None, **kw):
         from chanmover.userengine import Result
@@ -414,3 +417,56 @@ async def test_live_posts_get_their_links_pointed_at_the_new_channel(db, make):
     await engine.drain_live(job, force=True)
     text, ents, n = seen["out"]
     assert n == 1 and ents[0].url == "https://t.me/c/200/70" and text == "film x"   # destination -200 -> t.me/c/200/...
+
+
+class Predictable(FakeUser):
+    """Hands out destination ids one after another, like a real channel, and lets a test call the link rewriter."""
+    def __init__(self, *a, base=100, wrong_at=None, **kw):
+        super().__init__(*a, **kw)
+        self.base, self.wrong_at, self.rewritten = base, wrong_at, []
+
+    async def copy_window(self, src, dst, ids, hooks=None, link_rewrite=None, **kw):
+        from telethon.tl import types as tl
+        from chanmover.userengine import Result
+        res = Result()
+        for i in ids:
+            if link_rewrite:   # a post that links to the LAST post of the channel: its copy does not exist yet
+                ents = [tl.MessageEntityTextUrl(offset=0, length=4, url=f"https://t.me/oldchan/{self.ids[-1]}")]
+                self.rewritten.append(link_rewrite("film", ents)[1][0].url)
+            new = self.base + 1 + self.ids.index(i) + (7 if i == self.wrong_at else 0)
+            res.pairs.append((i, new))
+        return res
+
+
+async def test_links_to_not_yet_copied_posts_use_the_predicted_ids(db, make):
+    user = Predictable(ids=list(range(1, 11)), base=100)
+    engine, rec, job = await make(FakeBot(existing=[]), {"backend": "user", "fix_links": True}, username="oldchan")
+    engine.user = user
+    await engine.start(job)
+    await wait_done(engine, job)
+    row = await db.job(job)
+    assert row["status"] == "done" and json.loads(row["opts"])["base"] == 100
+    # the last post (id 10) will become 110 = base + 1 + 9; every copy links there, even the first ones
+    assert set(user.rewritten) == {"https://t.me/c/200/110"} and len(user.rewritten) == 10
+
+
+async def test_a_post_that_lands_on_the_wrong_id_stops_the_job_before_more_wrong_links_are_written(db, make):
+    user = Predictable(ids=list(range(1, 11)), base=100, wrong_at=3)
+    engine, rec, job = await make(FakeBot(existing=[]), {"backend": "user", "fix_links": True}, username="oldchan")
+    engine.user = user
+    await engine.start(job)
+    await wait_done(engine, job)
+    row = await db.job(job)
+    assert row["status"] == "error" and "پیش‌بینی" in row["error"] and rec.failed_jobs
+    assert [r["src_id"] for r in await db.id_map(job)][:3] == [1, 2, 3]       # what was sent is on record
+
+
+async def test_blocked_posts_are_left_out_and_counted(db, make):
+    user = Predictable(ids=[1, 2, 3], base=10)
+    user.blocked = [99]
+    engine, rec, job = await make(FakeBot(existing=[]), {"backend": "user", "fix_links": True}, username="oldchan")
+    engine.user = user
+    await engine.start(job)
+    await wait_done(engine, job)
+    row = await db.job(job)
+    assert row["skipped"] == 1 and row["copied"] == 3 and json.loads(row["opts"])["blocked"] == [99]
