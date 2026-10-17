@@ -29,6 +29,11 @@ CREATE TABLE IF NOT EXISTS windows(
 CREATE TABLE IF NOT EXISTS failures(
     job_id INTEGER, src_id INTEGER, reason TEXT, PRIMARY KEY(job_id, src_id));
 CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS fixes(
+    id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER, chat INTEGER, chat_title TEXT, status TEXT DEFAULT 'new',
+    names TEXT DEFAULT '[]', ids TEXT, total INTEGER DEFAULT 0, pos INTEGER DEFAULT 0, edited INTEGER DEFAULT 0,
+    links INTEGER DEFAULT 0, unmapped INTEGER DEFAULT 0, failed INTEGER DEFAULT 0, error TEXT, owner INTEGER,
+    status_chat INTEGER, status_msg INTEGER, created_at REAL, finished_at REAL);
 CREATE TABLE IF NOT EXISTS live_queue(
     job_id INTEGER, src_id INTEGER, grp TEXT, ts REAL, markup TEXT, PRIMARY KEY(job_id, src_id));
 """
@@ -68,6 +73,42 @@ class Database:
     async def _all(self, sql: str, args: Iterable[Any] = ()) -> list[aiosqlite.Row]:
         async with self.c.execute(sql, tuple(args)) as cur:
             return list(await cur.fetchall())
+
+    # link fixes -----------------------------------------------------------------------------------------------
+    async def create_fix(self, job: aiosqlite.Row, names: list[str], owner: int, ids: list[int]) -> int:
+        cur = await self.c.execute(
+            "INSERT INTO fixes(job_id,chat,chat_title,names,ids,total,owner,created_at) VALUES(?,?,?,?,?,?,?,?)",
+            (job["id"], job["dst"], job["dst_title"], json.dumps(names), json.dumps(ids), len(ids), owner, time.time()))
+        await self.c.commit()
+        return cur.lastrowid
+
+    async def fix(self, fix_id: int) -> aiosqlite.Row | None:
+        return await self._one("SELECT * FROM fixes WHERE id=?", (fix_id,))
+
+    async def fixes_for(self, job_id: int) -> list[aiosqlite.Row]:
+        return await self._all("SELECT * FROM fixes WHERE job_id=? ORDER BY id DESC", (job_id,))
+
+    async def fixes_with_status(self, *statuses: str) -> list[aiosqlite.Row]:
+        marks = ",".join("?" * len(statuses))
+        return await self._all(f"SELECT * FROM fixes WHERE status IN ({marks}) ORDER BY id", statuses)
+
+    async def update_fix(self, fix_id: int, **fields: Any) -> None:
+        allowed = {"status", "pos", "edited", "links", "unmapped", "failed", "error", "status_chat", "status_msg", "finished_at", "total", "ids"}
+        bad = set(fields) - allowed
+        if bad:
+            raise KeyError(f"unknown fix fields: {sorted(bad)}")
+        sets = ",".join(f"{k}=?" for k in fields)
+        await self.c.execute(f"UPDATE fixes SET {sets} WHERE id=?", (*fields.values(), fix_id))
+        await self.c.commit()
+
+    async def src_to_dst(self, job_id: int) -> dict[int, int]:
+        return {r["src_id"]: r["dst_id"] for r in await self._all(
+            "SELECT src_id,dst_id FROM msgmap WHERE job_id=? AND dst_id IS NOT NULL", (job_id,))}
+
+    async def earlier_job_into(self, chat_id: int, before_job: int) -> aiosqlite.Row | None:
+        """The latest finished transfer whose destination is `chat_id` (the chain: old channel -> archive -> archive 2)."""
+        return await self._one("SELECT * FROM jobs WHERE dst=? AND id<? AND status='done' AND copied>0 ORDER BY id DESC LIMIT 1",
+                               (chat_id, before_job))
 
     # small settings -----------------------------------------------------------------------------------------
     async def get_kv(self, key: str, default: str | None = None) -> str | None:

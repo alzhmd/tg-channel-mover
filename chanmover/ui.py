@@ -165,6 +165,8 @@ def job_keyboard(job, active: bool) -> Kb:
     extra = [Btn("🔄 تازه‌سازی", callback_data=f"j:{j}:view")]
     if s in ("done", "cancelled", "error", "paused", "running") and (job["copied"] or job["live"]):
         extra.append(Btn("📤 خروجی قدیم←جدید", callback_data=f"j:{j}:export"))
+    if s == "done" and job["copied"] and '"backend": "user"' in (job["opts"] or ""):
+        rows.append([Btn("🔗 اصلاح لینک‌های داخلی", callback_data=f"j:{j}:fix")])
     rows.append(extra)
     if job["skipped"]:
         rows.append([Btn(f"⏭ ردشده‌ها چیست؟ ({fa(job['skipped'])})", callback_data=f"j:{j}:skipped")])
@@ -178,6 +180,42 @@ def job_keyboard(job, active: bool) -> Kb:
     if s in ("done", "paused", "running"):
         rows.append([Btn("🔄 همگام‌سازی زنده: " + ("خاموش کن" if job["mirror"] else "روشن کن"), callback_data=f"j:{j}:mirror")])
     rows.append([Btn("🏠 منوی اصلی", callback_data="m:home")])
+    return Kb(rows)
+
+
+FIX_STATUS = {"new": "🆕 آماده", "running": "🔗 در حال اصلاح", "paused": "⏸ متوقف", "done": "✅ تمام شد",
+              "cancelled": "⛔ لغو شد", "error": "❌ خطا"}
+
+
+def fix_text(fix, flood_left: float = 0.0) -> str:
+    total, pos = fix["total"] or 0, fix["pos"] or 0
+    frac = (pos / total) if total else (1.0 if fix["status"] == "done" else 0.0)
+    lines = [f"<b>اصلاح لینک‌های داخلی #{fa(fix['id'])}</b> — {FIX_STATUS.get(fix['status'], fix['status'])}",
+             f"📥 کانال: <b>{esc(fix['chat_title'])}</b>", "",
+             f"{bar(frac)}  <b>{fa(int(frac * 100))}٪</b>",
+             f"🔍 بررسی‌شده: {fa(pos)} از {fa(total)} پست",
+             f"✏️ ویرایش‌شده: <b>{fa(fix['edited'])}</b> پست · {fa(fix['links'])} لینک عوض شد"]
+    if fix["unmapped"]:
+        lines.append(f"⚠️ {fa(fix['unmapped'])} لینک به پستی اشاره دارد که کپی نشده (مثلاً پاک‌شده)؛ همان‌طور ماند.")
+    if fix["failed"]:
+        lines.append(f"❌ {fa(fix['failed'])} پست ویرایش نشد.")
+    if fix["status"] == "running" and flood_left > 0:
+        lines.append(f"🐢 تلگرام سرعت را محدود کرده؛ ادامه تا {fa(int(flood_left))} ثانیه‌ی دیگر")
+    if fix["status"] == "error" and fix["error"]:
+        lines.append(f"\n❌ <code>{esc(fix['error'][:200])}</code>\n{explain_error(fix['error'])}")
+    if fix["status"] == "done":
+        lines.append("\nلینک‌های داخل پست‌ها حالا به همین کانال اشاره می‌کنند. پست‌های ویرایش‌شده در کانال برچسب «ویرایش‌شده» می‌گیرند (کار تلگرام است).")
+    return "\n".join(lines)
+
+
+def fix_keyboard(fix, active: bool) -> Kb:
+    f, s = fix["id"], fix["status"]
+    rows: list[list[Btn]] = []
+    if s == "running" and active:
+        rows.append([Btn("⏸ توقف", callback_data=f"x:{f}:pause"), Btn("⛔ لغو", callback_data=f"x:{f}:cancel")])
+    elif s in ("paused", "error", "running"):
+        rows.append([Btn("▶️ ادامه", callback_data=f"x:{f}:resume"), Btn("⛔ لغو", callback_data=f"x:{f}:cancel")])
+    rows.append([Btn("🔄 تازه‌سازی", callback_data=f"x:{f}:view"), Btn("🏠 منوی اصلی", callback_data="m:home")])
     return Kb(rows)
 
 
