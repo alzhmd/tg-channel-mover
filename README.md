@@ -42,6 +42,7 @@
 
 نکته‌های موتور پریمیوم: ایموجی‌های بدون «همتای پریمیوم» (مثل 🎥) تا وقتی «جایگزین نزدیک» روشن نباشد ساده می‌مانند؛ نگاشت ایموجی‌ها
 در `chanmover/data/premium_emoji.json` است (`{"ids": {"😀": "<custom emoji id>"}, "aliases": {...}}`) و با `PREMIUM_EMOJI_FILE` عوض می‌شود.
+**سرعت ایمن:** اکانت شما حدود یک پست در هر ۰٫۸ ثانیه می‌نویسد و با هر `FLOOD_WAIT` تلگرام خودکار کندتر می‌شود؛ انتظارها دقیقاً رعایت می‌شوند (حتی بعد از ری‌استارت) و انتظار بلند به خودِ شما اطلاع داده می‌شود. تلگرام سقف‌ها را منتشر نمی‌کند و بالا زدن سرعت فقط انتظارها را بلندتر می‌کند؛ کانال‌های بزرگ چند ساعت طول می‌کشد.
 پست‌های دکمه‌دار با کمک ربات منتقل می‌شوند (کاربر نمی‌تواند دکمه‌ی شیشه‌ای بفرستد)، پس ایموجی ویژه‌شان ساده می‌ماند؛ برای همگام‌سازی زنده
 و دکمه‌ها ربات باید در مبدا هم ادمین باشد. گزینه‌ی «محافظت از محتوا» فقط در موتور ربات است.
 
@@ -93,7 +94,8 @@ cp .env.example .env && chmod 600 .env     # BOT_TOKEN و ADMIN_IDS را پر ک
 | `TG_API_ID` / `TG_API_HASH` | — | اطلاعات برنامه از my.telegram.org؛ فقط برای موتور اکانت پریمیوم |
 | `USER_SESSION` | `data/user` | فایل نشست اکانت وصل‌شده |
 | `PREMIUM_EMOJI_FILE` | خالی | نگاشت ایموجی معمولی←پریمیوم (خالی: نسخه‌ی همراه) |
-| `USER_BATCH_SIZE` | `40` | تعداد پست در هر پنجره‌ی موتور پریمیوم |
+| `USER_BATCH_SIZE` | `20` | تعداد پست در هر پنجره‌ی موتور پریمیوم |
+| `USER_MIN_INTERVAL` | `0.8` | ثانیه‌ی انتظار برای هر پستی که اکانت می‌نویسد (سرعت ایمن؛ بعد از هر محدودیت تلگرام خودکار کندتر می‌شود) |
 | `BATCH_SIZE` | `20` | تعداد پست در هر درخواست (حداکثر ۱۰۰)؛ بعد از flood wait خودکار کم می‌شود |
 | `BATCH_DELAY` | `1.0` | مکث بین درخواست‌ها (ثانیه) |
 | `LOOKAHEAD` | `600` | کانال خصوصی: چند شناسه‌ی خالی بعد از آخرین پست دیده شود |
@@ -125,6 +127,8 @@ copying is done by your Premium Telegram account (linked with a QR code, like Te
 emoji are upgraded to Premium emoji automatically (map in `chanmover/data/premium_emoji.json`), sender is hidden, albums/media are
 reused by reference, posts needing no change are forwarded server-side without the author (100 per call), and the old→new id map is
 always exact. Set `TG_API_ID`/`TG_API_HASH` to enable it; the bot picks it by default when the linked account is Premium.
+
+**Pace.** The account writes about one post per 0.8 s (`USER_MIN_INTERVAL`), slows down further after every `FLOOD_WAIT`, waits out each one exactly (also across restarts) and tells you about long ones. Telegram publishes no limits and pushing harder only lengthens the waits, so a big channel takes hours.
 
 **Setup:** `pip install -r requirements.txt`, copy `.env.example` to `.env` (set `BOT_TOKEN`, `ADMIN_IDS`), run
 `python -m chanmover`, add the bot as an admin of both channels (source: any rights, destination: *Post messages*),

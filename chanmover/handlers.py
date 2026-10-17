@@ -675,6 +675,13 @@ class UiNotifier(Notifier):
         await self.app.bot.send_message(job["owner"], text, reply_markup=Kb(
             [[Btn("📊 جزئیات", callback_data=f"j:{job_id}:view"), Btn("📤 خروجی قدیم←جدید", callback_data=f"j:{job_id}:export")]]))
 
+    async def notice(self, job_id: int, text: str) -> None:
+        job = await self.db.job(job_id)
+        if job:
+            await self.app.bot.send_message(
+                job["owner"], f"⏳ انتقال #{fa(job_id)}: {text}\nاین محافظتِ معمولی تلگرام در برابر سرعت زیاد است، نه جریمه. "
+                              "ربات دقیقاً همان مدت صبر می‌کند و خودکار با سرعت کمتر ادامه می‌دهد؛ کاری لازم نیست.")
+
     async def failed(self, job_id: int, reason: str) -> None:
         job = await self.db.job(job_id)
         if job:

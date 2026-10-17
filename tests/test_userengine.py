@@ -54,3 +54,30 @@ async def test_scan_waits_out_a_flood_and_continues_after_the_last_id():
     ids, albums = await ub.scan(-100, 1, None, None, on_flood)
     assert ids == list(range(1, 11)) and Client.calls == [0, 5] and waited == [3]
     assert albums == {8: (8, 9), 9: (8, 9)}
+
+
+async def test_pacer_spaces_writes_and_backs_off_after_a_flood():
+    import time
+    from chanmover.userengine import Pacer
+    p = Pacer(0.05)
+    t = time.monotonic()
+    for _ in range(3):
+        await p.before()
+        p.after(2)  # two posts -> at least 0.1 s before the next write
+    assert time.monotonic() - t >= 0.19
+    p.flooded(30)
+    assert p.factor == 2.0
+    p.flooded(1400)
+    assert p.factor == 8.0  # x4 after a long wait, capped at 8
+    p.after(1)
+    assert 7.5 < p.factor < 8.0  # eases back slowly
+
+
+async def test_a_restart_waits_out_a_known_flood():
+    import time
+    from chanmover.userengine import Pacer
+    p = Pacer(0.0)
+    p.hold_until(time.time() + 2, margin=0.5)
+    t = time.monotonic()
+    await p.before()
+    assert time.monotonic() - t >= 2.2
