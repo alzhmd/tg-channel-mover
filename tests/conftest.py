@@ -57,7 +57,7 @@ class Recorder(Notifier):
 def cfg():
     return Config(token="x", admin_ids=frozenset({1}), claim_code="", db_path=":memory:", batch_size=10,
                   batch_delay=0.0, lookahead=30, scrape_delay=0.0, api_id=1, api_hash="h", user_session="x",
-                  emoji_file="", user_batch=10)
+                  emoji_file="", user_batch=10, user_interval=0.0)
 
 
 @pytest.fixture

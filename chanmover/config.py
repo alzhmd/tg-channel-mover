@@ -36,6 +36,7 @@ class Config:
     user_session: str    # Telethon session file of the connected Premium account
     emoji_file: str      # ordinary -> Premium emoji map (empty: the bundled one)
     user_batch: int      # posts per window with the Premium-account engine
+    user_interval: float # seconds the Premium account waits per post it writes (safe pace; grows after a flood wait)
 
     @classmethod
     def load(cls) -> "Config":
@@ -56,5 +57,6 @@ class Config:
             api_hash=os.environ.get("TG_API_HASH", "").strip(),
             user_session=os.environ.get("USER_SESSION", "data/user"),
             emoji_file=os.environ.get("PREMIUM_EMOJI_FILE", "").strip(),
-            user_batch=max(1, min(100, int(os.environ.get("USER_BATCH_SIZE", "40")))),
+            user_batch=max(1, min(100, int(os.environ.get("USER_BATCH_SIZE", "20")))),
+            user_interval=max(0.0, float(os.environ.get("USER_MIN_INTERVAL", "0.8"))),
         )

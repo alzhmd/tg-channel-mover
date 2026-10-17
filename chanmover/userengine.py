@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
@@ -29,6 +30,32 @@ FORWARD_ONLY = (types.MessageMediaPoll, types.MessageMediaGeo, types.MessageMedi
                 types.MessageMediaContact, types.MessageMediaDice, types.MessageMediaGame, types.MessageMediaInvoice,
                 types.MessageMediaUnsupported, types.MessageMediaStory, types.MessageMediaGiveaway,
                 types.MessageMediaGiveawayResults)
+
+
+class Pacer:
+    """Keeps the account's writing to a gentle, steady pace and backs off after every flood wait.
+
+    Telegram does not publish its limits; hammering them makes the waits grow. So: `base` seconds per post written
+    (with a little jitter), doubled after a flood wait (x4 after a long one, up to x8) and eased back 3 % per call."""
+
+    def __init__(self, base: float):
+        self.base, self.factor, self.next_at = base, 1.0, 0.0
+
+    async def before(self) -> None:
+        delay = self.next_at - time.monotonic()
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+    def after(self, posts: int) -> None:
+        self.next_at = time.monotonic() + self.base * self.factor * max(posts, 1) * (1 + random.uniform(0, 0.3))
+        self.factor = max(1.0, self.factor * 0.97)
+
+    def hold_until(self, epoch: float, margin: float = 60.0) -> None:
+        """Stay quiet until a wall-clock time (a flood wait that was still running when the service restarted)."""
+        self.next_at = max(self.next_at, time.monotonic() + max(0.0, epoch - time.time()) + margin)
+
+    def flooded(self, seconds: float) -> None:
+        self.factor = min(8.0, self.factor * (4 if seconds >= 300 else 2))
 
 
 @dataclass
@@ -67,11 +94,12 @@ def _entity_kind(e) -> str:
 
 
 class UserBackend:
-    def __init__(self, api_id: int, api_hash: str, session: str, emoji: EmojiMap):
+    def __init__(self, api_id: int, api_hash: str, session: str, emoji: EmojiMap, interval: float = 0.8):
         # flood_sleep_threshold=0: surface every FloodWait so the engine can show it and slow down
         self.client = TelegramClient(session, api_id, api_hash, device_model="Channel Mover", system_version="Linux",
                                      app_version=__version__, flood_sleep_threshold=0)
         self.emoji = emoji
+        self.pacer = Pacer(interval)
         self._peers: dict[int, object] = {}
 
     # session --------------------------------------------------------------------------------------------------
@@ -81,11 +109,18 @@ class UserBackend:
         return await self.client.is_user_authorized()
 
     async def whoami(self) -> dict | None:
+        """The linked account (cached for a minute: menus call this often and each call is an API request)."""
+        cached = getattr(self, "_me", None)
+        if cached and time.monotonic() - cached[0] < 60:
+            return cached[1]
         if not await self.connect():
+            self._me = None
             return None
         me = await self.client.get_me()
-        return {"id": me.id, "name": " ".join(x for x in (me.first_name, me.last_name) if x) or str(me.id),
+        info = {"id": me.id, "name": " ".join(x for x in (me.first_name, me.last_name) if x) or str(me.id),
                 "username": me.username, "premium": bool(getattr(me, "premium", False))}
+        self._me = (time.monotonic(), info)
+        return info
 
     async def qr_login(self):
         await self.connect()
@@ -95,6 +130,7 @@ class UserBackend:
         await self.client.get_dialogs(limit=200)  # fills the access-hash cache for the channels
 
     async def logout(self) -> None:
+        self._me = None
         if await self.connect():
             await self.client.log_out()
         else:
@@ -141,7 +177,7 @@ class UserBackend:
         while True:
             try:
                 async for m in self.client.iter_messages(src, reverse=True, min_id=last, max_id=(hi + 1) if hi else 0,
-                                                         wait_time=0):
+                                                         wait_time=1.5):
                     last = m.id
                     if isinstance(m, (types.MessageService, types.MessageEmpty)):
                         continue
@@ -163,6 +199,9 @@ class UserBackend:
             try:
                 return await make()
             except errors.FloodWaitError as e:
+                self.pacer.flooded(e.seconds)
+                log.warning("%s: flood wait %ss (pace is now %.1fs per post)", getattr(e.request, "__class__", type(e)).__name__,
+                            e.seconds, self.pacer.base * self.pacer.factor)
                 await hooks.flood(e.seconds)
             except (ConnectionError, asyncio.TimeoutError) as e:
                 tries += 1
@@ -212,6 +251,7 @@ class UserBackend:
             batch = list(pending)
             pending.clear()
             rids = [random.getrandbits(62) for _ in batch]
+            await self.pacer.before()
             try:
                 r = await self._call(hooks, lambda: self.client(functions.messages.ForwardMessagesRequest(
                     from_peer=src, id=[m.id for m in batch], random_id=rids, to_peer=dst, silent=silent or None,
@@ -221,6 +261,8 @@ class UserBackend:
             except errors.RPCError as e:
                 res.failed += [(m.id, type(e).__name__) for m in batch]
                 return
+            finally:
+                self.pacer.after(len(batch))
             for m, new in zip(batch, self._new_ids(r, rids)):
                 if new:
                     res.pairs.append((m.id, new))
@@ -235,6 +277,7 @@ class UserBackend:
                 t, e, n = self._entities(text, m.entities, upgrade, emoji)
                 texts.append(t); ents.append(e); count += n
             first = group[0]
+            await self.pacer.before()
             try:
                 if len(group) > 1:
                     sent = await self._call(hooks, lambda: self.client.send_file(
@@ -251,6 +294,8 @@ class UserBackend:
             except errors.RPCError as e:
                 res.failed += [(m.id, type(e).__name__) for m in group]
                 return
+            finally:
+                self.pacer.after(len(group))
             sent = sent if isinstance(sent, list) else [sent]
             for m, new in zip(group, sent):
                 res.pairs.append((m.id, new.id))

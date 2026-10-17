@@ -196,6 +196,7 @@ class Notifier:
     async def progress(self, job_id: int) -> None: ...
     async def finished(self, job_id: int) -> None: ...
     async def failed(self, job_id: int, reason: str) -> None: ...
+    async def notice(self, job_id: int, text: str) -> None: ...
 
 
 class Engine:
@@ -455,7 +456,13 @@ class Engine:
             async def flood(self, seconds: float) -> None:
                 st.flood_until = time.monotonic() + seconds
                 log.warning("job %s: Premium account flood wait %.0fs", job["id"], seconds)
+                await engine.db.set_kv("user_flood_until", str(time.time() + seconds))  # a restart must not skip it
                 await engine._tick(job["id"], st, force=True)
+                if seconds >= 300:  # tell the owner once: this is Telegram's normal pacing, not a penalty
+                    try:
+                        await engine.notifier.notice(job["id"], f"تلگرام برای {int(seconds // 60)} دقیقه سرعت نوشتن را محدود کرد.")
+                    except Exception:
+                        log.debug("notice failed", exc_info=True)
                 await asyncio.sleep(seconds + 1)
 
             async def with_buttons(self, src_id: int, rows: list) -> int | None:
@@ -469,7 +476,7 @@ class Engine:
                 job["src"], job["dst"], ids, silent=bool(opts.get("silent", True)), protect=bool(opts.get("protect")),
                 no_caption=bool(opts.get("no_caption")), upgrade=bool(opts.get("upgrade", True)),
                 emoji=load_map(self.cfg.emoji_file or None, bool(opts.get("aliases"))), hooks=Hooks())
-        except Exception as e:
+        except BaseException as e:  # also a shutdown cancel: what was already sent must not be sent again
             partial = getattr(e, "partial", None)
             if partial and partial.pairs:  # keep what was sent before the error: a retry must not send it again
                 fresh = await self.db.job(job["id"])

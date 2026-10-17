@@ -26,8 +26,11 @@ def main() -> None:
             try:  # the Premium-account engine is optional and needs telethon + qrcode
                 from .emoji import EmojiMap
                 from .userengine import UserBackend
-                user = UserBackend(cfg.api_id, cfg.api_hash, cfg.user_session, EmojiMap.load(cfg.emoji_file or None))
+                user = UserBackend(cfg.api_id, cfg.api_hash, cfg.user_session, EmojiMap.load(cfg.emoji_file or None),
+                                   cfg.user_interval)
                 await user.connect()
+                # a restart never skips a flood wait that was still running, and always starts quietly
+                user.pacer.hold_until(float(await db.get_kv("user_flood_until", "0") or 0), margin=60.0)
             except ImportError:
                 logging.getLogger("chanmover").warning("telethon is not installed: Premium-account engine disabled")
         engine = Engine(app.bot, db, cfg, notifier, user=user)

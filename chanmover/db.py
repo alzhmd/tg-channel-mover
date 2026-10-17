@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS windows(
     job_id INTEGER, first_src INTEGER, last_src INTEGER, dst_ids TEXT);
 CREATE TABLE IF NOT EXISTS failures(
     job_id INTEGER, src_id INTEGER, reason TEXT, PRIMARY KEY(job_id, src_id));
+CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS live_queue(
     job_id INTEGER, src_id INTEGER, grp TEXT, ts REAL, markup TEXT, PRIMARY KEY(job_id, src_id));
 """
@@ -67,6 +68,15 @@ class Database:
     async def _all(self, sql: str, args: Iterable[Any] = ()) -> list[aiosqlite.Row]:
         async with self.c.execute(sql, tuple(args)) as cur:
             return list(await cur.fetchall())
+
+    # small settings -----------------------------------------------------------------------------------------
+    async def get_kv(self, key: str, default: str | None = None) -> str | None:
+        row = await self._one("SELECT value FROM kv WHERE key=?", (key,))
+        return row["value"] if row else default
+
+    async def set_kv(self, key: str, value: str) -> None:
+        await self.c.execute("INSERT INTO kv(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+        await self.c.commit()
 
     # admins -------------------------------------------------------------------------------------------------
     async def is_admin(self, user_id: int) -> bool:
