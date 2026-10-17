@@ -129,20 +129,31 @@ class UserBackend:
 
     # reading --------------------------------------------------------------------------------------------------
     async def scan(self, src_id: int, lo: int = 1, hi: int | None = None,
-                   progress: Callable[[int, int], Awaitable[None]] | None = None) -> tuple[list[int], dict[int, tuple[int, int]]]:
-        """Ids of every real post of the source (ascending) and the id span of each multi-post album."""
+                   progress: Callable[[int, int], Awaitable[None]] | None = None,
+                   on_flood: Callable[[float], Awaitable[None]] | None = None) -> tuple[list[int], dict[int, tuple[int, int]]]:
+        """Ids of every real post of the source (ascending) and the id span of each multi-post album.
+
+        A flood wait in the middle of the history is waited out and the listing continues after the last id seen."""
         src = await self.peer(src_id)
         ids: list[int] = []
         groups: dict[int, list[int]] = {}
-        async for m in self.client.iter_messages(src, reverse=True, min_id=max(lo - 1, 0), max_id=(hi + 1) if hi else 0,
-                                                 wait_time=0):
-            if isinstance(m, (types.MessageService, types.MessageEmpty)):
-                continue
-            ids.append(m.id)
-            if m.grouped_id:
-                groups.setdefault(m.grouped_id, []).append(m.id)
-            if progress and len(ids) % 200 == 0:
-                await progress(len(ids), m.id)
+        last = max(lo - 1, 0)
+        while True:
+            try:
+                async for m in self.client.iter_messages(src, reverse=True, min_id=last, max_id=(hi + 1) if hi else 0,
+                                                         wait_time=0):
+                    last = m.id
+                    if isinstance(m, (types.MessageService, types.MessageEmpty)):
+                        continue
+                    ids.append(m.id)
+                    if m.grouped_id:
+                        groups.setdefault(m.grouped_id, []).append(m.id)
+                    if progress and len(ids) % 200 == 0:
+                        await progress(len(ids), m.id)
+                break
+            except errors.FloodWaitError as e:
+                log.warning("flood wait %ss while listing the source", e.seconds)
+                await (on_flood or Hooks().flood)(e.seconds)
         return ids, {i: (g[0], g[-1]) for g in groups.values() if len(g) > 1 for i in g}
 
     # copying --------------------------------------------------------------------------------------------------

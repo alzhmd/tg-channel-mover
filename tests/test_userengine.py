@@ -20,3 +20,37 @@ def test_entity_kind_names():
     assert _entity_kind(types.MessageEntityCustomEmoji(offset=0, length=2, document_id=1)) == "custom_emoji"
     assert _entity_kind(types.MessageEntityCode(offset=0, length=2)) == "code"
     assert _entity_kind(types.MessageEntityBold(offset=0, length=2)) == "bold"
+
+
+async def test_scan_waits_out_a_flood_and_continues_after_the_last_id():
+    from telethon import errors
+    from chanmover.emoji import EmojiMap
+    from chanmover.userengine import UserBackend
+
+    class Msg:
+        def __init__(self, i, grouped=None):
+            self.id, self.grouped_id = i, grouped
+
+    class Client:
+        calls = []
+
+        async def get_input_entity(self, cid):
+            return cid
+
+        async def iter_messages(self, src, reverse, min_id, max_id, wait_time):
+            self.calls.append(min_id)
+            for i in range(min_id + 1, 11):
+                if i == 6 and len(self.calls) == 1:
+                    raise errors.FloodWaitError(request=None, capture=3)
+                yield Msg(i, 77 if i in (8, 9) else None)
+
+    waited = []
+
+    async def on_flood(seconds):
+        waited.append(seconds)
+
+    ub = UserBackend.__new__(UserBackend)
+    ub.client, ub._peers, ub.emoji = Client(), {}, EmojiMap({})
+    ids, albums = await ub.scan(-100, 1, None, None, on_flood)
+    assert ids == list(range(1, 11)) and Client.calls == [0, 5] and waited == [3]
+    assert albums == {8: (8, 9), 9: (8, 9)}

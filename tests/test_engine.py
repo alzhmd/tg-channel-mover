@@ -295,7 +295,7 @@ class FakeUser:
     async def connect(self):
         return True
 
-    async def scan(self, src, lo, hi, progress):
+    async def scan(self, src, lo, hi, progress, on_flood=None):
         return list(self.ids), dict(self.albums)
 
     async def copy_window(self, src, dst, ids, hooks=None, **kw):
