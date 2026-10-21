@@ -12,7 +12,9 @@ import logging
 import time
 
 import qrcode
-from telegram import InlineKeyboardButton as Btn, InlineKeyboardMarkup as Kb, InputMediaPhoto, Update
+from telegram import InlineKeyboardButton as Btn
+from telegram import InlineKeyboardMarkup as Kb
+from telegram import InputMediaPhoto, Update
 from telegram.error import TelegramError
 from telegram.ext import Application, ContextTypes
 
@@ -129,7 +131,7 @@ async def _wait_qr(app: Application, user, qr, msg, chat_id: int) -> None:
             try:
                 await qr.wait(timeout=25)
                 break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 await qr.recreate()
                 if not await _refresh_qr(app.bot, qr, msg, link):
                     link = False  # Telegram refused the tg:// link in the caption: keep the QR only

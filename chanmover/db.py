@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import aiosqlite
 
@@ -49,14 +50,15 @@ class Database:
         self.c = conn
 
     @classmethod
-    async def open(cls, path: str) -> "Database":
+    async def open(cls, path: str) -> Database:
         if path != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         conn = await aiosqlite.connect(path)
         conn.row_factory = aiosqlite.Row
         await conn.execute("PRAGMA journal_mode=WAL")
         await conn.executescript(SCHEMA)
-        for table, column in (("jobs", "kbs TEXT"), ("live_queue", "markup TEXT"), ("chats", "via TEXT DEFAULT 'bot'")):  # databases from older versions
+        migrations = (("jobs", "kbs TEXT"), ("live_queue", "markup TEXT"), ("chats", "via TEXT DEFAULT 'bot'"))
+        for table, column in migrations:  # databases from older versions
             have = {r["name"] for r in await (await conn.execute(f"PRAGMA table_info({table})")).fetchall()}
             if column.split()[0] not in have:
                 await conn.execute(f"ALTER TABLE {table} ADD COLUMN {column}")
@@ -93,7 +95,8 @@ class Database:
         return await self._all(f"SELECT * FROM fixes WHERE status IN ({marks}) ORDER BY id", statuses)
 
     async def update_fix(self, fix_id: int, **fields: Any) -> None:
-        allowed = {"status", "pos", "edited", "links", "unmapped", "failed", "error", "status_chat", "status_msg", "finished_at", "total", "ids"}
+        allowed = {"status", "pos", "edited", "links", "unmapped", "failed", "error", "status_chat", "status_msg",
+                   "finished_at", "total", "ids"}
         bad = set(fields) - allowed
         if bad:
             raise KeyError(f"unknown fix fields: {sorted(bad)}")
@@ -116,7 +119,8 @@ class Database:
         return row["value"] if row else default
 
     async def set_kv(self, key: str, value: str) -> None:
-        await self.c.execute("INSERT INTO kv(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+        await self.c.execute(
+            "INSERT INTO kv(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
         await self.c.commit()
 
     # admins -------------------------------------------------------------------------------------------------

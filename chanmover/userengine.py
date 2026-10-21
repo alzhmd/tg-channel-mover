@@ -11,8 +11,8 @@ import asyncio
 import logging
 import random
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable
 
 from telethon import TelegramClient, errors
 from telethon.tl import functions, types
@@ -170,7 +170,8 @@ class UserBackend:
     # reading --------------------------------------------------------------------------------------------------
     async def scan(self, src_id: int, lo: int = 1, hi: int | None = None,
                    progress: Callable[[int, int], Awaitable[None]] | None = None,
-                   on_flood: Callable[[float], Awaitable[None]] | None = None) -> tuple[list[int], dict[int, tuple[int, int]], list[int]]:
+                   on_flood: Callable[[float], Awaitable[None]] | None = None,
+                   ) -> tuple[list[int], dict[int, tuple[int, int]], list[int]]:
         """Ids of every copyable post of the source (ascending), the id span of each multi-post album, and the ids of posts
         Telegram itself blocks for everyone (copyright etc.), which can never be copied.
 
@@ -220,7 +221,7 @@ class UserBackend:
                 log.warning("%s: flood wait %ss (pace is now %.1fs per post)", getattr(e.request, "__class__", type(e)).__name__,
                             e.seconds, self.pacer.base * self.pacer.factor)
                 await hooks.flood(e.seconds)
-            except (ConnectionError, asyncio.TimeoutError) as e:
+            except (TimeoutError, ConnectionError) as e:
                 tries += 1
                 if tries > 4:
                     raise
@@ -295,7 +296,9 @@ class UserBackend:
             for m in group:
                 text = "" if (no_caption and m.media) else (m.raw_text or "")
                 t, e, n = self._entities(text, m.entities, upgrade, emoji, link_rewrite)
-                texts.append(t); ents.append(e); count += n
+                texts.append(t)
+                ents.append(e)
+                count += n
             first = group[0]
             await self.pacer.before()
             try:

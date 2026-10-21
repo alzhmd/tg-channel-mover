@@ -1,8 +1,15 @@
 .env
-data/
+/data/
 venv/
 __pycache__/
 .pytest_cache/
 *.db
 *.db-wal
 *.db-shm
+.venv/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+*.session
+*.session-journal

@@ -1,4 +1,4 @@
-from chanmover.emoji import EmojiMap, u16, load_map
+from chanmover.emoji import EmojiMap, load_map, u16
 
 MAP = EmojiMap({"💥": "111", "🎖": "222", "1️⃣": "333", "👑": "444"}, {"🎥": "💥"})
 

@@ -36,7 +36,7 @@ class EmojiMap:
         self._rx = re.compile(f"(?:{pattern}){VS}?(?![‍\U0001F3FB-\U0001F3FF])") if keys else None
 
     @classmethod
-    def load(cls, path: str | Path | None = None, use_aliases: bool = False) -> "EmojiMap":
+    def load(cls, path: str | Path | None = None, use_aliases: bool = False) -> EmojiMap:
         data = json.loads(Path(path or DEFAULT_MAP).read_text(encoding="utf-8"))
         return cls(data["ids"], data.get("aliases"), use_aliases)
 
