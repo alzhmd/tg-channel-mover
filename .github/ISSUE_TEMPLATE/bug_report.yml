@@ -1,0 +1,29 @@
+name: Bug report
+description: Something did not work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what happened instead?
+    validations:
+      required: true
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Engine
+      options: [Bot engine, Premium-account engine, Not sure]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      placeholder: "1.0.0 or a commit hash"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log lines
+      description: "`journalctl -u channel-mover` or `docker compose logs`. Remove tokens, phone numbers and invite links first."
+      render: text

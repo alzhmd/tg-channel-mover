@@ -1,0 +1,13 @@
+services:
+  channel-mover:
+    build: .
+    image: channel-mover:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_PATH: /app/data/chanmover.db
+      USER_SESSION: /app/data/user
+    volumes:
+      - ./data:/app/data
+    # a stop lets the window in flight finish and be recorded (up to 60 s)
+    stop_grace_period: 90s

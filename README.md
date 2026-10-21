@@ -1,158 +1,131 @@
-# Channel Mover — انتقال‌دهنده کانال تلگرام
+<div align="center">
 
-[فارسی](#فارسی) · [English](#english)
+# Channel Mover
 
----
+**Copy a whole Telegram channel into another one - no "Forwarded from", albums and captions intact, Premium emoji preserved, links re-pointed, resumable.**
 
-## فارسی
+[![CI](https://github.com/alzhmd/tg-channel-mover/actions/workflows/ci.yml/badge.svg)](https://github.com/alzhmd/tg-channel-mover/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)
+[![Code style: ruff](https://img.shields.io/badge/lint-ruff-261230.svg)](https://github.com/astral-sh/ruff)
 
-رباتی برای **کپی کردن کل محتوای یک کانال تلگرام در کانال دیگر** — از اولین تا آخرین پست — **بدون نام فرستنده و بدون «فوروارد از …»**،
-با همان متن، کپشن، فرمت، فایل‌ها (حتی بالای ۲۰ مگابایت)، نظرسنجی‌ها و آلبوم‌ها. وقتی کانال مبدا قرار است حذف شود و باید فعالیت
-در کانال جدید ادامه پیدا کند، یا هر بار که لازم باشد این کار تکرار شود.
+[فارسی](README.fa.md) · [Architecture](docs/ARCHITECTURE.md) · [Telegram limits](docs/TELEGRAM_LIMITS.md) · [Operations](docs/OPERATIONS.md) · [Changelog](CHANGELOG.md)
 
-### امکانات
+</div>
 
-- منوی کامل فارسی با دکمه: انتخاب مبدا و مقصد، تنظیمات، شروع، **توقف / ادامه / لغو** و نوار پیشرفت زنده (۰ تا ۱۰۰٪، سرعت، زمان باقی‌مانده)
-- کپی سمت سرور تلگرام (`copyMessages`)؛ فایلی دانلود یا آپلود نمی‌شود، پس سریع است و محدودیت ۲۰ مگابایتی ربات‌ها ندارد
-- ترتیب اصلی پست‌ها حفظ می‌شود و آلبوم‌ها کنار هم می‌مانند
-- **دکمه‌های شیشه‌ای لینک‌دار** (مثل «تماشا» که به ربات یا سایت می‌رود) همراه پست منتقل می‌شوند؛ هم برای تاریخچه، هم برای پست‌های جدید
-- **ادامه‌ی خودکار** بعد از ری‌استارت ربات یا سرور؛ مدیریت خودکار محدودیت سرعت تلگرام (flood wait)
-- **همگام‌سازی زنده**: پست‌های جدیدِ مبدا بعد از پایان کپی تاریخچه، خودکار به مقصد می‌روند
-- خروجی CSV «شناسه‌ی قدیم ← شناسه‌ی جدید» برای اصلاح لینک‌ها و فهرست‌های قدیمی
-- کپی چند کانال، به هر تعداد و هر زمان؛ هر انتقال یک کار مستقل است
-- فقط مدیرهای مجاز می‌توانند از ربات استفاده کنند
+When a channel has to be abandoned or deleted, its audience and its content have to move. Forwarding 14,000 posts by hand shows the
+original sender on every one, breaks albums and loses your Premium emoji. Channel Mover is a Telegram bot that does the whole job for
+you, from a button menu, and keeps going after restarts and Telegram's flood limits.
 
-### بازه و لینک دعوت
+It was built for - and verified on - a real 14,068-post film channel: two complete copies, 81 albums, 67,000 Premium emoji and 9,500 links
+to old posts, every one checked against the source.
 
-- در تنظیمات هر انتقال «📍 از پست» و «🏁 تا پست» هست: لینک پست (`t.me/نام/123`)، شماره‌اش یا خودِ پستِ فورواردشده را بدهید. فقط «از» = از آن پست تا آخر؛ فقط «تا» = از اول تا آن پست؛ هر دو = بین این دو (خود آن دو پست هم کپی می‌شوند).
-- مقصد یا مبدا می‌تواند لینک دعوت خصوصی (`t.me/+…`) باشد، به شرط اینکه «🌟 اکانت پریمیوم» وصل و از قبل عضو آن کانال باشد؛ ربات هرگز خودش جوین نمی‌شود.
-- می‌توانید یک کانال را از کپیِ قبلی‌اش هم کپی کنید (مثلاً «ارشیو ۲» از «ارشیو ۱»): فقط فوروارد بدون نام انجام می‌شود و ایموجی‌های پریمیوم از قبل داخل پست‌ها هستند.
+## Features
 
-### دو موتور، یک ربات
+* **No sender, no "Forwarded from"** - posts arrive as if you had written them.
+* **Everything is kept**: text, captions, formatting, files of any size, polls, stickers, albums, URL buttons and (with the Premium engine) **Premium emoji**.
+* **Ordinary emoji become Premium emoji** automatically (optional).
+* **Links to the old channel are re-pointed** at the matching posts of the new one - written correctly the first time, even for posts that do not exist yet.
+* **Any range**: everything, *from post X to the end*, *up to post Y*, or *X to Y* - given as a link, a number or a forwarded post.
+* **Resumable and safe**: pause / resume / cancel, survives restarts and crashes, never sends a post twice, waits out Telegram's flood limits.
+* **Live mirror** of new posts of the source after the history is copied.
+* **Exact old → new post ids** as CSV (to repair external links, indexes, bots).
+* **Undo**: delete exactly the posts a transfer created.
+* Reusable for any number of channels; private invite links accepted; owner-only access.
 
-| | 🤖 موتور ربات | 🌟 موتور اکانت پریمیوم |
+## Two engines
+
+| | 🤖 Bot engine | 🌟 Premium-account engine |
 |---|---|---|
-| چطور کار می‌کند | Bot API (`copyMessages`) | اکانت پریمیومِ شما (MTProto) با اتصال QR |
-| ایموجی پریمیوم | **از بین می‌رود** (تلگرام به ربات‌ها در کانال اجازه نمی‌دهد) | حفظ می‌شود + ایموجی‌های معمولی **خودکار پریمیوم** می‌شوند |
-| سرعت | حدود ۶۰ پست در دقیقه | چند برابر سریع‌تر (فوروارد بدون نام ۱۰۰تایی) |
-| لازم دارد | ربات ادمین مبدا و مقصد | اکانت پریمیوم: عضو مبدا، ادمین مقصد؛ `TG_API_ID`/`TG_API_HASH` |
-| نگاشت قدیم←جدید | گاهی فقط بازه‌ای | همیشه دقیق |
+| How | Bot API `copyMessages` | your Premium account (MTProto), linked by QR code |
+| Premium emoji | **lost** - Telegram does not let bots place them in channels, not even Premium-owned bots | **kept**, and ordinary emoji are upgraded |
+| Links to old posts | not rewritten | **rewritten while copying** |
+| Speed | ~60 posts/min | ~60-75 posts/min by default (safe pace) |
+| Needs | the bot as admin of both channels | `TG_API_ID`/`TG_API_HASH`; the account as member of the source and admin of the destination |
+| Old → new ids | partly exact | always exact |
 
-> **چرا ربات نمی‌تواند؟** طبق تغییرات رسمی Bot API (نسخه ۹٫۴) ربات‌هایی که مالکشان پریمیوم است فقط در چت خصوصی، گروه و سوپرگروه
-> می‌توانند ایموجی پریمیوم بفرستند، **کانال** شامل نیست. تست واقعی هم همین را نشان داد: حتی با توکنِ ساخته‌شده توسط اکانت پریمیوم،
-> ارسال و کپی ربات در کانال ایموجی ویژه را حذف می‌کند. فقط یک **کاربر پریمیوم** می‌تواند آن را در کانال بگذارد.
+The bot picks the Premium engine by default when a Premium account is linked, and tells you what the other choice would cost.
+Why the bot cannot do it: see [docs/TELEGRAM_LIMITS.md](docs/TELEGRAM_LIMITS.md).
 
-ربات هوشمند است: «🌟 اکانت پریمیوم» را از منوی اصلی وصل کنید (QR یا لینک؛ اگر حساب رمز دومرحله‌ای دارد، رمز را می‌فرستید و پیامش فوراً پاک
-می‌شود). اگر اکانت Premium باشد، موتور به‌طور پیش‌فرض روی «اکانت پریمیوم» می‌ماند؛ در غیر این صورت ربات هشدار می‌دهد که ایموجی‌های ویژه ساده
-می‌شوند. دکمه‌ی «🔎 بررسی ایموجی ربات» هم با یک پیام آزمایشی در همان چت می‌گوید مالکِ توکن Premium است یا نه.
+## Quick start
 
-نکته‌های موتور پریمیوم: ایموجی‌های بدون «همتای پریمیوم» (مثل 🎥) تا وقتی «جایگزین نزدیک» روشن نباشد ساده می‌مانند؛ نگاشت ایموجی‌ها
-در `chanmover/data/premium_emoji.json` است (`{"ids": {"😀": "<custom emoji id>"}, "aliases": {...}}`) و با `PREMIUM_EMOJI_FILE` عوض می‌شود.
-**سرعت ایمن:** اکانت شما حدود یک پست در هر ۰٫۸ ثانیه می‌نویسد و با هر `FLOOD_WAIT` تلگرام خودکار کندتر می‌شود؛ انتظارها دقیقاً رعایت می‌شوند (حتی بعد از ری‌استارت) و انتظار بلند به خودِ شما اطلاع داده می‌شود. تلگرام سقف‌ها را منتشر نمی‌کند و بالا زدن سرعت فقط انتظارها را بلندتر می‌کند. برای ارسال رسانه یک سهمیه‌ی ساعتی هم دارد: در یک انتقال واقعی ۱۴ هزار پستی هر یکی دو ساعت یک انتظار حدود ۲۵ دقیقه‌ای آمد که ربات رعایت کرد (کل کار حدود ۵ ساعت).
-پست‌های دکمه‌دار با کمک ربات منتقل می‌شوند (کاربر نمی‌تواند دکمه‌ی شیشه‌ای بفرستد)، پس ایموجی ویژه‌شان ساده می‌ماند؛ برای همگام‌سازی زنده
-و دکمه‌ها ربات باید در مبدا هم ادمین باشد. گزینه‌ی «محافظت از محتوا» فقط در موتور ربات است.
+1. **Create a bot** with [@BotFather](https://t.me/BotFather) and copy its token. Find your numeric Telegram id (for example with
+   [@userinfobot](https://t.me/userinfobot)).
+2. **Configure** - `cp .env.example .env` and set `BOT_TOKEN` and `ADMIN_IDS`. For the Premium engine also set `TG_API_ID` and `TG_API_HASH`
+   (from [my.telegram.org](https://my.telegram.org) → *API development tools*).
+3. **Run**
+   ```bash
+   docker compose up -d --build            # or:  make install && make run
+   ```
+   (systemd unit: `deploy/channel-mover.service`)
+4. **Add the bot** as admin of the source (any right) and of the destination (*Post messages*). The channels appear in the bot by themselves.
+5. **Premium engine only**: in the bot open *🌟 Premium account → 🔗 Connect with QR* and scan the code in
+   *Telegram → Settings → Devices → Link Desktop Device*. Make sure that account is a member of the source and an admin of the destination.
+6. Tap **➕ New transfer** → source → destination → options → **🚀 Continue** → **✅ Yes, start**. Watch the progress bar; pause or cancel any time.
 
-### نصب
+> The bot's interface is currently **Persian**; translations are welcome (see [CONTRIBUTING](CONTRIBUTING.md)).
+
+### Options of a transfer
+
+| Option | Meaning |
+|---|---|
+| 🌟/🤖 Engine | Premium account or bot |
+| 📍 From post / 🏁 To post | limit the range by link, number or forwarded post (both ends are copied) |
+| 🔕 Silent | no notifications for the destination's subscribers (default on) |
+| 🔄 Live mirror | keep copying new posts of the source |
+| ✨ Premium emoji | turn ordinary emoji into Premium emoji (Premium engine) |
+| 🔗 Links → this channel | re-point links to the old channel's posts; 🏷 *former usernames* of the old channel can be added |
+| 🚫 Remove captions / 🔒 Protect content | as named |
+
+## Pace, floods and your account
+
+Telegram limits how fast an account may write and does not publish the numbers. A `FLOOD_WAIT` is a normal "slow down", not a ban - but
+ignoring it makes the waits longer. Channel Mover therefore writes at a steady pace (`USER_MIN_INTERVAL`, 0.8 s per post), doubles it after
+every wait, waits exactly the demanded time (also across restarts) and tells you about long waits. Expect a ~25-minute wait every hour or two on a big
+channel (Telegram's hourly media quota): **14,000 posts take about 5 hours.** While a send wait runs, the linked account cannot send messages in the Telegram
+app either. Details and the measurements: [docs/TELEGRAM_LIMITS.md](docs/TELEGRAM_LIMITS.md).
+
+## Configuration
+
+All settings are environment variables (see `.env.example`).
+
+| Variable | Default | |
+|---|---|---|
+| `BOT_TOKEN` | - | token from @BotFather |
+| `ADMIN_IDS` | - | comma-separated numeric Telegram ids allowed to use the bot |
+| `CLAIM_CODE` | empty | if set, anyone sending `/start <code>` becomes an admin |
+| `TG_API_ID`, `TG_API_HASH` | empty | Telegram app credentials; enable the Premium engine |
+| `USER_SESSION` | `data/user` | session file of the linked account (**secret**) |
+| `USER_MIN_INTERVAL` | `0.8` | seconds per post the account writes |
+| `USER_BATCH_SIZE` | `20` | posts per window (Premium engine) |
+| `PREMIUM_EMOJI_FILE` | bundled | ordinary → Premium emoji map ([docs](docs/PREMIUM_EMOJI.md)) |
+| `DB_PATH` | `data/chanmover.db` | SQLite database |
+| `BATCH_SIZE`, `BATCH_DELAY` | `20`, `1.0` | bot engine window size / pause |
+| `LOOKAHEAD`, `SCRAPE_DELAY` | `600`, `0.35` | bot engine: private-source scan, preview paging |
+
+## Good to know
+
+* The copy has **today's date** on every post (Telegram does not allow changing it). Keep the destination private until the job is done.
+* Sources with *Restrict saving content* cannot be copied; posts Telegram blocks for everyone (copyright) are skipped and counted.
+* Inline buttons: URL buttons are carried over; callback buttons only work inside their own bot, so they are reported, not copied.
+* Links to a **private** destination look like `t.me/c/<id>/<post>` and open only for its members.
+* Editing posts afterwards is possible but Telegram allows only ~4-5 edits a minute - that is why links are written at copy time.
+* Use it on channels you own or administer and with an account you own. See [SECURITY.md](SECURITY.md) for what is secret.
+
+## Documentation
+
+* [Architecture](docs/ARCHITECTURE.md) - jobs, windows, engines, link prediction, crash safety
+* [What Telegram allows](docs/TELEGRAM_LIMITS.md) - measured limits and why the design is the way it is
+* [Operations](docs/OPERATIONS.md) - service, upgrades, flood waits, recovery
+* [Premium emoji map](docs/PREMIUM_EMOJI.md)
+
+## Development
 
 ```bash
-git clone https://github.com/alzhmd/tg-channel-mover.git && cd tg-channel-mover
-python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
-cp .env.example .env && chmod 600 .env     # BOT_TOKEN و ADMIN_IDS را پر کنید
-./venv/bin/python -m chanmover
+make install && make lint && make test
 ```
+Telegram is faked in the tests, so no token or network is needed. Contributions are welcome: [CONTRIBUTING.md](CONTRIBUTING.md).
 
-برای اجرای دائمی با systemd فایل `deploy/channel-mover.service` را (با مسیر خودتان) در `/etc/systemd/system/` بگذارید و
-`systemctl enable --now channel-mover` بزنید.
+## License
 
-### روش استفاده
-
-1. در [@BotFather](https://t.me/BotFather) یک ربات بسازید و توکنش را در `.env` بگذارید. شناسه‌ی عددی تلگرام خودتان را در `ADMIN_IDS` بنویسید.
-2. ربات را **ادمین کانال مبدا** (هر دسترسی) و **ادمین کانال مقصد** (دسترسی «ارسال پیام») کنید. ربات در پیوی خبر می‌دهد.
-3. در ربات: «➕ انتقال جدید» ← مبدا ← مقصد ← تنظیمات ← شروع.
-
-### نکته‌ها و محدودیت‌ها
-
-- **سرعت را تلگرام تعیین می‌کند.** ربات‌ها در یک کانال هم‌زمان فقط چند ده پست در دقیقه می‌توانند بفرستند و ربات هنگام دریافت `retry_after`
-  صبر می‌کند. برای کانال‌های ده‌ها هزار پستی چند ساعت زمان لازم است؛ ربات خودش ادامه می‌دهد.
-- تاریخ پست‌ها در مقصد، زمان کپی است (تلگرام اجازه‌ی تغییر نمی‌دهد). پیش‌فرض ارسال **بی‌صدا** است تا اعضا نوتیف نگیرند؛ مقصد را تا پایان کار عمومی نکنید.
-- کانال مبدا نباید «محدودیت ذخیره و فوروارد» داشته باشد؛ تلگرام کپی چنین پست‌هایی را ممنوع می‌کند.
-- لینک‌های داخل متن پست‌ها (مثل `t.me/مبدا/123`) خودکار عوض نمی‌شوند؛ از خروجی CSV استفاده کنید.
-- تلگرام در کپی، دکمه‌های شیشه‌ای را حذف می‌کند؛ ربات آن‌ها را از پیش‌نمایش عمومیِ کانال می‌خواند و دوباره می‌گذارد. این فقط برای **کانال مبدای عمومی** ممکن است (برای مبدای خصوصی آن را موقتاً عمومی کنید)، و فقط دکمه‌های **لینکی**؛ دکمه‌های «کالبک» فقط داخل ربات سازنده‌شان کار می‌کنند و منتقل نمی‌شوند (تعدادشان در گزارش می‌آید).
-- پیام‌های سرویس (پین، ساخت کانال) و نوع‌هایی که تلگرام کپی نمی‌کند «ردشده» شمرده می‌شوند؛ دکمه‌ی «ردشده‌ها چیست؟» در ربات توضیح و فهرست می‌دهد.
-- ربات نمی‌تواند لینک دعوت خصوصی (`t.me/+…`) را باز کند؛ باید ادمین آن کانال باشد.
-- اگر پروسه وسط کار با کشته شدن ناگهانی (kill -9 / قطع برق) قطع شود، ممکن است یک «پنجره»‌ی کوچک (حداکثر `BATCH_SIZE` پست) در مقصد تکراری شود؛ ری‌استارت معمولی بی‌خطر است.
-
-### چطور کار می‌کند
-
-ربات (Bot API) نمی‌تواند تاریخچه‌ی کانال را بخواند، ولی `copyMessages` را روی هر شناسه‌ی پست اجرا می‌کند. پس بازه‌ی شناسه‌ها را به
-پنجره‌های کوچک می‌شکند و با همان ترتیب کپی می‌کند. برای کانال‌های عمومی، آخرین شناسه (و شناسه‌ی پست‌های دیده‌شده) از پیش‌نمایش
-وب `t.me/s/<username>` خوانده می‌شود تا بازه‌ی دقیق و پیشرفت درست باشد؛ برای کانال خصوصی تا چند صد شناسه بعد از آخرین پست جلو می‌رود
-(یا آخرین پست را برایش فوروارد کنید). نگاشت قدیم←جدید فقط وقتی ثبت می‌شود که یقین باشد؛ پنجره‌های مبهم جدا نگه داشته می‌شوند.
-
-### پیکربندی (`.env`)
-
-| متغیر | پیش‌فرض | توضیح |
-|---|---|---|
-| `BOT_TOKEN` | — | توکن ربات |
-| `ADMIN_IDS` | — | شناسه‌های عددی مدیران، با کاما |
-| `CLAIM_CODE` | خالی | اگر پر باشد، هر کس `/start <کد>` بفرستد مدیر می‌شود |
-| `DB_PATH` | `data/chanmover.db` | مسیر SQLite |
-| `TG_API_ID` / `TG_API_HASH` | — | اطلاعات برنامه از my.telegram.org؛ فقط برای موتور اکانت پریمیوم |
-| `USER_SESSION` | `data/user` | فایل نشست اکانت وصل‌شده |
-| `PREMIUM_EMOJI_FILE` | خالی | نگاشت ایموجی معمولی←پریمیوم (خالی: نسخه‌ی همراه) |
-| `USER_BATCH_SIZE` | `20` | تعداد پست در هر پنجره‌ی موتور پریمیوم |
-| `USER_MIN_INTERVAL` | `0.8` | ثانیه‌ی انتظار برای هر پستی که اکانت می‌نویسد (سرعت ایمن؛ بعد از هر محدودیت تلگرام خودکار کندتر می‌شود) |
-| `BATCH_SIZE` | `20` | تعداد پست در هر درخواست (حداکثر ۱۰۰)؛ بعد از flood wait خودکار کم می‌شود |
-| `BATCH_DELAY` | `1.0` | مکث بین درخواست‌ها (ثانیه) |
-| `LOOKAHEAD` | `600` | کانال خصوصی: چند شناسه‌ی خالی بعد از آخرین پست دیده شود |
-| `SCRAPE_DELAY` | `0.35` | مکث بین صفحه‌های پیش‌نمایش (ثانیه) |
-
-### توسعه
-
-```bash
-./venv/bin/pip install pytest pytest-asyncio && ./venv/bin/python -m pytest
-```
-
----
-
-## English
-
-A Telegram bot that **copies a whole channel into another one** — first post to last — **without the sender name or a
-"Forwarded from" header**, keeping text, captions, formatting, files (even above the 20 MB bot download limit), polls
-and albums. Built for the moment a source channel is about to disappear and the audience moves to a new one, and for
-repeating that as often as needed.
-
-**Features:** URL inline buttons are carried over (read from the public preview, or from the update for live posts) · Persian button UI (pick source/destination, options, start, pause/resume/cancel, live 0–100 % progress with
-speed and ETA) · server-side `copyMessages` (nothing is downloaded or uploaded) · original order and albums preserved ·
-automatic resume after restarts and automatic flood-wait handling · live mirroring of new source posts once the history
-is done · CSV export of the old→new message id map · any number of independent jobs · admin-only access.
-
-**Range & invite links.** *From post* / *To post* in the options take a post link, a number or a forwarded post (only *from* = to the end, only *to* = from the start, both = between, both ends included). A private invite link (`t.me/+…`) works as source or destination when the linked Premium account is already in that channel (it never joins by itself). A channel can also be copied from an earlier copy.
-
-**Two engines.** *Bot engine*: Bot API `copyMessages` — Telegram strips Premium emoji from anything a bot sends or copies into a
-channel (Bot API 9.4 only allows them in private chats and groups; verified with a Premium-owned bot). *Premium-account engine*: the
-copying is done by your Premium Telegram account (linked with a QR code, like Telegram Desktop) — Premium emoji are kept, ordinary
-emoji are upgraded to Premium emoji automatically (map in `chanmover/data/premium_emoji.json`), sender is hidden, albums/media are
-reused by reference, posts needing no change are forwarded server-side without the author (100 per call), and the old→new id map is
-always exact. Set `TG_API_ID`/`TG_API_HASH` to enable it; the bot picks it by default when the linked account is Premium.
-
-**Pace.** The account writes about one post per 0.8 s (`USER_MIN_INTERVAL`), slows down further after every `FLOOD_WAIT`, waits out each one exactly (also across restarts) and tells you about long ones. Telegram publishes no limits and pushing harder only lengthens the waits, so a big channel takes hours. Media sends also seem to have an hourly quota: a real 14,000-post run met a ~25-minute wait every hour or two (about 5 h in total), all honoured.
-
-**Setup:** `pip install -r requirements.txt`, copy `.env.example` to `.env` (set `BOT_TOKEN`, `ADMIN_IDS`), run
-`python -m chanmover`, add the bot as an admin of both channels (source: any rights, destination: *Post messages*),
-then use *New transfer* in the bot. A systemd unit is in `deploy/`.
-
-**Good to know**
-
-- Throughput is set by Telegram's per-chat flood limits, not by the bot — expect on the order of tens of posts per
-  minute; very large channels take hours. The bot waits on `retry_after` by itself and resumes after restarts.
-- Posts get the copy time as their date. Sending is silent by default; keep the destination private until the job is done.
-- The source must not have *Restrict saving content* enabled. Service messages and types Telegram refuses to copy are
-  reported as skipped. Links inside post texts are not rewritten — use the CSV export. Telegram strips inline buttons when copying, so the bot re-attaches *URL* buttons it reads from the channel's public preview (public sources only; callback buttons only work inside their own bot and are reported, not copied).
-- The Bot API cannot read channel history, so ids are walked in order with `copyMessages`; for public channels the
-  `t.me/s/<username>` preview supplies the newest id and exact old→new pairs, for private ones the scan runs a
-  configurable number of ids past the newest post found (or forward the last post to the bot).
-- A hard kill (SIGKILL / power loss) in the middle of a window can duplicate at most `BATCH_SIZE` posts on resume; a
-  normal `systemctl restart` finishes the window in flight first.
-
-License: MIT
+[MIT](LICENSE). The bundled emoji map only contains public Telegram custom-emoji ids.
