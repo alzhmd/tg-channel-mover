@@ -173,7 +173,7 @@ class LinkFixer:
                 if st.cancel or st.stop:
                     break
                 chunk = ids[pos:pos + 50]
-                msgs = await self.user._call(hooks, lambda: self.user.client.get_messages(peer, ids=chunk))
+                msgs = await self.user._call(hooks, lambda chunk=chunk: self.user.client.get_messages(peer, ids=chunk))
                 for m in msgs:
                     if m is None or isinstance(m, (types.MessageEmpty, types.MessageService)) or not m.entities:
                         continue
@@ -184,7 +184,7 @@ class LinkFixer:
                         continue
                     await self.user.pacer.before()
                     try:
-                        await self.user._call(hooks, lambda: self.user.client.edit_message(
+                        await self.user._call(hooks, lambda m=m, text=text, ents=ents: self.user.client.edit_message(
                             peer, m.id, text=text, formatting_entities=ents,
                             link_preview=isinstance(m.media, types.MessageMediaWebPage)))
                         edited += 1

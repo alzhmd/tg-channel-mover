@@ -1,11 +1,11 @@
 import asyncio
 import json
 
-from chanmover import scrape
-from chanmover.engine import classify
+from conftest import FakeBot, Sent
 from telegram.error import BadRequest, Forbidden
 
-from conftest import FakeBot, Sent
+from chanmover import scrape
+from chanmover.engine import classify
 
 
 async def wait_done(engine, job_id):
@@ -427,6 +427,7 @@ class Predictable(FakeUser):
 
     async def copy_window(self, src, dst, ids, hooks=None, link_rewrite=None, **kw):
         from telethon.tl import types as tl
+
         from chanmover.userengine import Result
         res = Result()
         for i in ids:

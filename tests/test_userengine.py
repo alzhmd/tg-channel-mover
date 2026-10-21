@@ -24,6 +24,7 @@ def test_entity_kind_names():
 
 async def test_scan_waits_out_a_flood_and_continues_after_the_last_id():
     from telethon import errors
+
     from chanmover.emoji import EmojiMap
     from chanmover.userengine import UserBackend
 
@@ -58,6 +59,7 @@ async def test_scan_waits_out_a_flood_and_continues_after_the_last_id():
 
 async def test_pacer_spaces_writes_and_backs_off_after_a_flood():
     import time
+
     from chanmover.userengine import Pacer
     p = Pacer(0.05)
     t = time.monotonic()
@@ -75,6 +77,7 @@ async def test_pacer_spaces_writes_and_backs_off_after_a_flood():
 
 async def test_a_restart_waits_out_a_known_flood():
     import time
+
     from chanmover.userengine import Pacer
     p = Pacer(0.0)
     p.hold_until(time.time() + 2, margin=0.5)
@@ -85,6 +88,7 @@ async def test_a_restart_waits_out_a_known_flood():
 
 def test_after_a_recent_flood_the_pace_starts_at_a_quarter_speed():
     import time
+
     from chanmover.userengine import Pacer
     p = Pacer(1.0)
     p.hold_until(time.time() - 600, margin=0)

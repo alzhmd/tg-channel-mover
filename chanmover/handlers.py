@@ -9,11 +9,21 @@ import logging
 import re
 import time
 
-from telegram import BotCommand, InlineKeyboardButton as Btn, InlineKeyboardMarkup as Kb, Update
-from telegram.constants import ChatMemberStatus as S, ChatType
+from telegram import BotCommand, Update
+from telegram import InlineKeyboardButton as Btn
+from telegram import InlineKeyboardMarkup as Kb
+from telegram.constants import ChatMemberStatus as S
+from telegram.constants import ChatType
 from telegram.error import BadRequest, RetryAfter, TelegramError
-from telegram.ext import (Application, CallbackQueryHandler, ChatMemberHandler, CommandHandler, ContextTypes,
-                          MessageHandler, filters)
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    ChatMemberHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 from . import premium_ui, ui
 from .engine import Engine, Notifier
@@ -206,7 +216,9 @@ async def screen_opts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     d = draft(context)
     o = d["opts"]
     src, dst = await db.get_chat(d["src"]), await db.get_chat(d["dst"])
-    onoff = lambda v: "روشن ✅" if v else "خاموش"
+    def onoff(v: object) -> str:
+        return "روشن ✅" if v else "خاموش"
+
     user = premium_ui.get_user(context)
     info = await user.whoami() if user else None
     is_user = o["backend"] == "user"
@@ -280,14 +292,14 @@ async def on_wizard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         context.user_data["await"] = {"kind": "post", "which": key}
         what = "شروع" if action == "from" else "پایان"
         await show(update, f"{'📍' if action == 'from' else '🏁'} پستِ <b>{what}</b> را مشخص کنید: لینک پست "
-                           "(مثل <code>t.me/ExampleChannel/12345</code>)، یا شماره‌اش، یا خودِ پست را همین‌جا <b>فوروارد کنید</b>.\n"
+                           "(مثل <code>t.me/MyChannel/12345</code>)، یا شماره‌اش، یا خودِ پست را همین‌جا <b>فوروارد کنید</b>.\n"
                            + ("پستِ شروع هم خودش کپی می‌شود." if action == "from" else "پستِ پایان هم خودش کپی می‌شود.")
                            + "\nمثال‌ها: «از پست ۵۰۰۰ تا آخر» ← فقط «از» را بگذارید؛ «از ۵۰۰۰ تا ۶۰۰۰» ← هر دو را.",
                    Kb([[Btn("🧹 برداشتن این محدودیت", callback_data=f"w:{action}:clear")], [Btn("↩️ برگشت", callback_data="w:back")]]))
     elif action == "names":
         context.user_data["await"] = {"kind": "wnames"}
         await show(update, "🏷 اگر کانال مبدا قبلاً یوزرنیم دیگری داشته و پست‌های قدیمی هنوز لینک‌هایی با آن دارند (مثلاً "
-                           "<code>t.me/ExampleChannel/4098</code>)، آن یوزرنیم‌ها را بفرستید (هرکدام در یک خط یا با فاصله). "
+                           "<code>t.me/OldName/4098</code>)، آن یوزرنیم‌ها را بفرستید (هرکدام در یک خط یا با فاصله). "
                            "برای پاک کردن: «ندارد».",
                    Kb([[Btn("↩️ برگشت", callback_data="w:back")]]))
     elif action == "hint":
@@ -660,7 +672,7 @@ async def screen_fix(update: Update, context: ContextTypes.DEFAULT_TYPE, job) ->
             "• ⚠️ تلگرام فقط حدود ۴ تا ۵ ویرایش در دقیقه می‌دهد (برای هزاران پست ده‌ها ساعت)؛ برای کانال بزرگ بهتر است انتقال را با گزینه‌ی «لینک‌ها حین کپی» از اول انجام دهید. این بخش برای چند پست یا اصلاح‌های کوچک است.\n"
             "• پست‌های ویرایش‌شده برچسب «ویرایش‌شده» می‌گیرند؛ این کار تلگرام است.\n"
             "• لینک به پستی که کپی نشده (مثلاً پاک‌شده) همان‌طور می‌ماند.\n"
-            "• اگر کانال قدیمی قبلاً اسم دیگری داشته (مثلاً <code>ExampleChannel</code>)، آن را هم اضافه کنید."
+            "• اگر کانال قدیمی قبلاً اسم دیگری داشته (مثلاً <code>OldName</code>)، آن را هم اضافه کنید."
             + (f"\n\nنام‌های اضافه: {', '.join(names)}" if names else "") + last)
     await show(update, text, Kb([[Btn("🧪 آزمایش روی ۳۰ پست آخر", callback_data=f"x:{job['id']}:trial")],
                                  [Btn("✅ شروع اصلاح همه‌ی پست‌ها", callback_data=f"x:{job['id']}:new")],
@@ -682,7 +694,7 @@ async def on_fix(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     if action == "names":
         context.user_data["await"] = {"kind": "fixnames", "job": num}
-        await show(update, "نام‌های دیگرِ کانال قدیمی را بفرستید (هرکدام در یک خط یا با فاصله)، مثل <code>ExampleChannel</code> یا لینکش. "
+        await show(update, "نام‌های دیگرِ کانال قدیمی را بفرستید (هرکدام در یک خط یا با فاصله)، مثل <code>OldName</code> یا لینکش. "
                            "این‌ها فقط برای تشخیص لینک‌های قدیمی هستند.", Kb([[Btn("↩️ برگشت", callback_data=f"j:{num}:fix")]]))
         return
     if action in ("new", "trial"):

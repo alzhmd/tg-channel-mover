@@ -6,7 +6,7 @@ from telethon.tl import types
 from chanmover.linkfix import LinkFixer, build_rules, channel_number
 from chanmover.userengine import Pacer
 
-PM, A, B = -1001234567890, -1003941169817, -1004344149165
+PM, A, B = -1001111111111, -1002222222222, -1003333333333
 
 
 class FakeClient:
@@ -46,7 +46,7 @@ def post(i, *urls):
 
 
 async def setup(db):
-    await db.upsert_chat(PM, "pm", "ExampleChannel", "channel", False)
+    await db.upsert_chat(PM, "pm", "OldChannel", "channel", False)
     await db.upsert_chat(A, "A", None, "channel", True)
     await db.upsert_chat(B, "B", None, "channel", True)
     j4 = await db.create_job(await db.get_chat(PM), await db.get_chat(A), {"mirror": False}, 1)
@@ -60,32 +60,32 @@ async def setup(db):
 
 async def test_rules_follow_the_chain_old_channel_to_archive_to_archive_two(db):
     j4, j6 = await setup(db)
-    rules, target = await build_rules(db, await db.job(j6), ["ExampleChannel"])
-    assert target.channel_id == channel_number(B) == 4344149165 and target.username is None
+    rules, target = await build_rules(db, await db.job(j6), ["OldName"])
+    assert target.channel_id == channel_number(B) == 3333333333 and target.username is None
     by_chat = {frozenset(r.channel_ids): r for r in rules}
     assert by_chat[frozenset({channel_number(A)})].mapping == {10: 1, 20: 2, 30: 3, 40: 4}
     old = by_chat[frozenset({channel_number(PM)})]
-    assert old.mapping == {100: 1, 200: 2, 300: 3} and {"ExampleChannel", "ExampleChannel"} <= old.usernames
+    assert old.mapping == {100: 1, 200: 2, 300: 3} and {"oldchannel", "oldname"} <= old.usernames
 
 
 async def test_fixer_edits_only_posts_with_matching_links_and_resumes(db):
     j4, j6 = await setup(db)
-    msgs = {10: post(10, "https://t.me/ExampleChannel/100", "https://example.com"), 20: post(20),
-            30: post(30, "https://t.me/ExampleChannel/999", "https://t.me/ExampleChannel/300")}
+    msgs = {10: post(10, "https://t.me/OldChannel/100", "https://example.com"), 20: post(20),
+            30: post(30, "https://t.me/OldChannel/999", "https://t.me/OldName/300")}
     user = FakeUser(msgs)
     fixer = LinkFixer(db, user)
-    fix_id = await fixer.create(await db.job(j4), 1, ["ExampleChannel"])
+    fix_id = await fixer.create(await db.job(j4), 1, ["OldName"])
     await fixer.start(fix_id)
     await asyncio.wait_for(fixer.state[fix_id].task, 10)
     fix = await db.fix(fix_id)
     assert fix["status"] == "done" and fix["total"] == 3 and fix["pos"] == 3
     assert fix["edited"] == 2 and fix["links"] == 2 and fix["unmapped"] == 1
     urls = {e[0]: [x.url for x in e[2]] for e in user.client.edits}
-    assert urls[10] == ["https://t.me/c/3941169817/10", "https://example.com"]      # same-id links: the archive's own post 10
-    assert urls[30] == ["https://t.me/ExampleChannel/999", "https://t.me/c/3941169817/30"]
+    assert urls[10] == ["https://t.me/c/2222222222/10", "https://example.com"]      # same-id links: the archive's own post 10
+    assert urls[30] == ["https://t.me/OldChannel/999", "https://t.me/c/2222222222/30"]
     # a second run finds nothing left to change
     user.client.edits.clear()
-    again = await fixer.create(await db.job(j4), 1, ["ExampleChannel"])
+    again = await fixer.create(await db.job(j4), 1, ["OldName"])
     await fixer.start(again)
     await asyncio.wait_for(fixer.state[again].task, 10)
     assert user.client.edits == [] and (await db.fix(again))["edited"] == 0

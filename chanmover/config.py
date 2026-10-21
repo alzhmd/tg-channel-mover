@@ -39,7 +39,7 @@ class Config:
     user_interval: float # seconds the Premium account waits per post it writes (safe pace; grows after a flood wait)
 
     @classmethod
-    def load(cls) -> "Config":
+    def load(cls) -> Config:
         _load_env_file(Path(os.environ.get("ENV_FILE", ".env")))
         token = os.environ.get("BOT_TOKEN", "").strip()
         if not token:

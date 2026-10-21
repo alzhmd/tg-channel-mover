@@ -5,7 +5,8 @@ import html
 import json
 import time
 
-from telegram import InlineKeyboardButton as Btn, InlineKeyboardMarkup as Kb
+from telegram import InlineKeyboardButton as Btn
+from telegram import InlineKeyboardMarkup as Kb
 
 _FA = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
 

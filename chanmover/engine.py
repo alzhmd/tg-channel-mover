@@ -17,14 +17,15 @@ from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TimedOut
 
 from . import scrape
-from .emoji import load_map
 from .config import Config
 from .db import Database
+from .emoji import load_map
 
 log = logging.getLogger("chanmover.engine")
 
 try:  # the Premium-account engine is optional (needs telethon)
-    from .userengine import FATAL as USER_FATAL, Hooks as UserHooks
+    from .userengine import FATAL as USER_FATAL
+    from .userengine import Hooks as UserHooks
 except ImportError:  # pragma: no cover
     USER_FATAL, UserHooks = (), object
 
@@ -75,7 +76,7 @@ class Batch:
     upgraded: int = 0      # Premium-account engine: posts rewritten with Premium emoji
     buttons_lost: int = 0
 
-    def merge(self, other: "Batch") -> "Batch":
+    def merge(self, other: Batch) -> Batch:
         self.pairs += other.pairs
         self.failed += other.failed
         self.windows += other.windows
@@ -477,7 +478,8 @@ class Engine:
                 await engine._tick(job["id"], st, force=True)
                 if seconds >= 300:  # tell the owner once: this is Telegram's normal pacing, not a penalty
                     try:
-                        await engine.notifier.notice(job["id"], f"تلگرام برای {int(seconds // 60)} دقیقه سرعت نوشتن را محدود کرد.")
+                        await engine.notifier.notice(
+                            job["id"], f"تلگرام برای {int(seconds // 60)} دقیقه سرعت نوشتن را محدود کرد.")
                     except Exception:
                         log.debug("notice failed", exc_info=True)
                 await asyncio.sleep(seconds + 1)
@@ -510,7 +512,8 @@ class Engine:
             partial = getattr(e, "partial", None)
             if partial and partial.pairs:  # keep what was sent before the error: a retry must not send it again
                 fresh = await self.db.job(job["id"])
-                await self.db.record_batch(job["id"], partial.pairs, partial.failed, [], copied=fresh["copied"] + len(partial.pairs))
+                await self.db.record_batch(job["id"], partial.pairs, partial.failed, [],
+                                           copied=fresh["copied"] + len(partial.pairs))
             if isinstance(e, USER_FATAL):
                 raise FatalError(f"{type(e).__name__}: {e}") from e
             raise

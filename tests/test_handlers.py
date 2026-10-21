@@ -66,7 +66,9 @@ async def test_listed_but_not_copied_posts_are_found(db, make_job):
 
 async def test_channel_post_with_url_buttons_is_queued_with_them(db, cfg, make_job):
     import json
+
     from telegram import Bot, Update
+
     from chanmover.handlers import on_channel_post
     job = await make_job(ids=[1], pos=2)
     await db.update_job(job["id"], status="done")
@@ -98,8 +100,8 @@ async def test_undo_lists_every_post_the_job_created(db, make_job):
 
 def test_parse_post_id():
     from chanmover.handlers import parse_post_id
-    assert parse_post_id("https://t.me/ExampleChannel/12345") == 12345   # the "3" in the channel name is not an id
-    assert parse_post_id("t.me/c/2121858214/987?single") == 987
+    assert parse_post_id("https://t.me/OldChannel/12345") == 12345   # the "3" in the channel name is not an id
+    assert parse_post_id("t.me/c/1111111111/987?single") == 987
     assert parse_post_id("۵۰۰۰") == 5000 and parse_post_id(" 77 ") == 77
     assert parse_post_id("آخرین") == "clear" and parse_post_id("همه") == "clear"
     assert parse_post_id("hello") is None
