@@ -1,16 +1,22 @@
 [Unit]
-Description=Channel Mover — Telegram channel migration bot
+Description=Channel Mover - Telegram channel migration bot
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
+# Adjust the paths (and create a dedicated user: `useradd --system --home /opt/channel-mover channelmover`)
+User=channelmover
 WorkingDirectory=/opt/channel-mover
 ExecStart=/opt/channel-mover/venv/bin/python -m chanmover
 Restart=always
 RestartSec=5
-# Keep the SQLite DB and .env readable by this service only
+# A stop lets the window in flight finish and be recorded (up to 60 s)
+TimeoutStopSec=90
+# The database and the linked account's session must stay private to this user
 UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target

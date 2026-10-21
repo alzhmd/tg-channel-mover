@@ -1,6 +1,5 @@
 python-telegram-bot==22.7
 aiosqlite==0.22.1
 httpx==0.28.1
-# Premium-account engine (optional at runtime: it stays off without TG_API_ID / TG_API_HASH)
 telethon==1.45.0
 qrcode[pil]==8.2
