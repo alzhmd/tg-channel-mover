@@ -4,7 +4,7 @@ All notable changes are listed here. The format follows [Keep a Changelog](https
 
 ## [1.0.0] - 2026-10-22
 
-First stable release, proven on a real 14,000-post channel (two complete copies, ~2,000 links re-pointed, 81 albums).
+First stable release, proven on a real 14,000-post channel (two complete copies, 9,500 links re-pointed, 81 albums, 67,000 Premium emoji).
 
 ### Added
 - **Bot engine**: server-side `copyMessages` in windows, no sender name / "Forwarded from", albums and captions kept,
