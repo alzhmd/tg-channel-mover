@@ -24,6 +24,7 @@ and may change; treat it as a guide, not a contract.
 | Even at ~60 posts/minute a send (`SendMedia`) wait of ~25 minutes came every one or two hours | observed (hourly media quota) |
 | **Editing**: only ~4-5 edits per minute; after ~20-25 edits a 4-minute wait follows | observed on a channel, 3 consecutive waits of 228-265 s |
 | Reading history (`GetHistory`) at full speed is rate limited too (24-26 s waits); `wait_time=1.5-2 s` avoids it | observed |
+| A few emoji of the bundled map are not accepted as custom emoji (keycaps such as 0️⃣, ⭐️, 📨 in our run): Telegram silently keeps the ordinary emoji. About 0.1 % of posts had one or two of them | observed (11 of 14,200 posts) |
 | A `FLOOD_WAIT` is not a ban; the official docs only ask clients to wait the stated time | [core.telegram.org/api/errors](https://core.telegram.org/api/errors) |
 
 ## Channels and links
