@@ -17,7 +17,7 @@ When a channel has to be abandoned or deleted, its audience and its content have
 original sender on every one, breaks albums and loses your Premium emoji. Channel Mover is a Telegram bot that does the whole job for
 you, from a button menu, and keeps going after restarts and Telegram's flood limits.
 
-It was built for - and verified on - a real 14,068-post film channel: two complete copies, 81 albums, 67,000 Premium emoji and 9,500 links
+It was built for - and verified on - a real 14,000-post film channel: two complete copies, 81 albums, 67,000 Premium emoji and 9,500 links
 to old posts, every one checked against the source.
 
 ## Features
@@ -110,6 +110,8 @@ All settings are environment variables (see `.env.example`).
 * Inline buttons: URL buttons are carried over; callback buttons only work inside their own bot, so they are reported, not copied.
 * Links to a **private** destination look like `t.me/c/<id>/<post>` and open only for its members.
 * Editing posts afterwards is possible but Telegram allows only ~4-5 edits a minute - that is why links are written at copy time.
+* **Edits of source posts made after they were copied are not mirrored** (only new posts are). Telegram's edit limit (~4-5 per minute) makes
+  bulk re-editing impractical; a few edits can be repaired by running the transfer again for that range.
 * Use it on channels you own or administer and with an account you own. See [SECURITY.md](SECURITY.md) for what is secret.
 
 ## Documentation
@@ -117,6 +119,7 @@ All settings are environment variables (see `.env.example`).
 * [Architecture](docs/ARCHITECTURE.md) - jobs, windows, engines, link prediction, crash safety
 * [What Telegram allows](docs/TELEGRAM_LIMITS.md) - measured limits and why the design is the way it is
 * [Operations](docs/OPERATIONS.md) - service, upgrades, flood waits, recovery
+* [Walkthrough of the bot](docs/WALKTHROUGH.md)
 * [Premium emoji map](docs/PREMIUM_EMOJI.md)
 
 ## Development
